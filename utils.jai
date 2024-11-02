@@ -1,0 +1,30 @@
+
+fatal_error :: (format: string, args: ..Any) {
+    builder: String_Builder;
+    print_to_builder(*builder, format, ..args);
+    message := builder_to_string(*builder);
+    SDL_ShowSimpleMessageBox(0x00000010, "Fatal error!", message.data, null);
+    exit(0);
+}
+
+file_read_string :: (file: *File, arena: *Arena) -> string {
+    count: int;
+    file_read(file, *count, size_of(int));
+    
+    data := arena_push_n(arena, u8, xx count);
+    file_read(file, data.data, count);
+    
+    return .{count, data.data};
+}
+
+file_read_array :: (file: *File, arena: *Arena, $T: Type, count: int) -> [] T {
+    out := arena_push_n(arena, T, xx count);
+    file_read(file, out.data, count * size_of(T));
+    return out;
+}
+
+#scope_file
+
+#import "Basic";
+#import "Windows";
+#import "Windows_Utf8";
