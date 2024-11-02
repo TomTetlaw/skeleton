@@ -2,8 +2,8 @@
 Bone :: struct {
     id: int;
     name: string;
-    local_transform: Mat4;
-    model_space_transform: Mat4;
+    transform: Mat4;
+    inverse_transform: Mat4;
     parent: *Bone;
 }
 
@@ -19,14 +19,29 @@ Mesh :: struct {
     tex_coords: [] Vec2;
     normals: [] Vec3;
     indices: [] u32;
+    
     weights: [] Vec3;
     bone_ids: [] Bone_Ids;
     skeleton: *Skeleton;
 }
 
+Animation :: struct {
+    path: string;
+    name: string;
+    bone_names: [] string;
+    bone_count: int;
+    sample_count: int;
+    positions: [] Vec3;
+    rotations: [] Quaternion;
+    scales: [] Vec3;
+}
+
 init_mesh_system :: () {
     meshes = create_typed_arena(Mesh);
     mesh_arena = create_arena();
+    
+    animations = create_typed_arena(Animation);
+    animation_arena = create_arena();
 }
 
 load_mesh :: (path: string) -> *Mesh {
@@ -37,8 +52,9 @@ load_mesh :: (path: string) -> *Mesh {
     
     if !success return *null_mesh;
     
-    header := file_read_mesh_header(*file, *mesh_arena);
+    header := file_read_mesh_header(*file);
     if !equal(header.magic, "MESH") {
+        print("Failed to load: % is not a mesh file!", path);
         return *null_mesh;
     }
     
@@ -58,15 +74,16 @@ load_mesh :: (path: string) -> *Mesh {
         bone: Bone;
         bone.id = it.id;
         bone.name = it.name;
-        bone.local_transform = it.transform;
         
         if it.parent == -1 {
             bone.parent = null;
-            bone.model_space_transform = it.transform;
+            bone.transform = it.transform;
         } else {
             bone.parent = *bones[it.parent];
-            bone.model_space_transform = bone.parent.model_space_transform * it.transform;
+            bone.transform = bone.parent.transform * it.transform;
         }
+        
+        bone.inverse_transform = mat4_inverse(bone.transform);
         
         hash := get_hash(it.name) % 512;
         bone_name_map[hash] = it_index;
@@ -89,6 +106,49 @@ load_mesh :: (path: string) -> *Mesh {
     mesh.skeleton = skeleton;
     
     return mesh;
+}
+
+find_bone :: (skeleton: *Skeleton, name: string) -> *Bone {
+    hash := get_hash(name) % 512;
+    return *skeleton.bones[skeleton.bone_name_map[hash]];
+}
+
+load_animation :: (path: string) -> *Animation {
+    for * animations if equal(it.path, path) return it;
+    
+    file, success := file_open(path);
+    defer if success file_close(*file);
+    
+    if !success return *null_animation;
+    
+    header := file_read_anim_header(*file);
+    if !equal(header.magic, "ANIM") {
+        print("Failed to load: % is not an anim file!", path);
+        return *null_animation;
+    }
+    
+    name := file_read_string(*file, *animation_arena);
+    
+    bone_names := arena_push_n(*animation_arena, string, xx header.bone_count);
+    for 0..header.bone_count-1 {
+        bone_names[it] = file_read_string(*file, *animation_arena);
+    }
+    
+    positions := file_read_array(*file, *animation_arena, Vec3, header.bone_count * header.sample_count);
+    rotations := file_read_array(*file, *animation_arena, Quaternion, header.bone_count * header.sample_count);
+    scales := file_read_array(*file, *animation_arena, Vec3, header.bone_count * header.sample_count);
+    
+    anim := arena_push(*animations);
+    anim.name = name;
+    anim.path = path;
+    anim.sample_count = header.sample_count;
+    anim.bone_count = header.bone_count;
+    anim.bone_names = bone_names;
+    anim.positions = positions;
+    anim.rotations = rotations;
+    anim.scales = scales;
+    
+    return anim;
 }
 
 #scope_file
@@ -117,16 +177,28 @@ file_read_bones :: (file: *File, arena: *Arena, count: int) -> [] Serialized_Bon
     return bones;
 }
 
-file_read_mesh_header :: (file: *File, arena: *Arena) -> Mesh_Header {
+file_read_mesh_header :: (file: *File) -> Mesh_Header {
     header: Mesh_Header;
-    header.magic = file_read_string(file, arena);
+    header.magic = file_read_string(file, *mesh_arena);
     file_read(file, *header.num_vertices, size_of(int));
     file_read(file, *header.num_indices, size_of(int));
     file_read(file, *header.num_bones, size_of(int));
     return header;
 }
 
+file_read_anim_header :: (file: *File) -> Anim_Header {
+    header: Anim_Header;
+    header.magic = file_read_string(file, *animation_arena);
+    file_read(file, *header.sample_count, size_of(int));
+    file_read(file, *header.bone_count, size_of(int));
+    return header;
+}
+
 null_mesh: Mesh;
+null_animation: Animation;
 
 meshes: Typed_Arena(Mesh);
 mesh_arena: Arena;
+
+animations: Typed_Arena(Animation);
+animation_arena: Arena;

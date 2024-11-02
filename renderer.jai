@@ -94,10 +94,10 @@ draw_skeleton :: (skeleton: *Skeleton, transform: Mat4, colour: Vec4) {
 		parent_transform: Mat4 = ---;
         parent := it.parent;
         
-		if parent parent_transform = transform * parent.model_space_transform;
+		if parent parent_transform = transform * parent.transform;
 		else parent_transform = transform;
         
-		world_space_transform := transform * it.model_space_transform;
+		world_space_transform := transform * it.transform;
         
 		start := Vec3.{
             parent_transform._03,
@@ -110,9 +110,6 @@ draw_skeleton :: (skeleton: *Skeleton, transform: Mat4, colour: Vec4) {
             world_space_transform._13,
             world_space_transform._23
         };
-        
-        name := it.name;
-        pname := ifx it.parent then it.parent.name else "";
         
 		draw_line(start, end, 0.5, colours[it_index%9]);
 	}

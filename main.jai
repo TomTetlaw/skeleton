@@ -33,6 +33,13 @@ main :: () {
 #if DEBUG_MESH_COMPILER compile_mesh("../mesh_source_data/man2.fbx", "build/mesh");
     
     mesh_test := load_mesh("mesh/man2/man2.mesh");
+    anim_test := load_animation("mesh/man2/man_dance.anim");
+    
+    anim_player: Anim_Player;
+    anim_player.mesh = mesh_test;
+    anim_player.anim = anim_test;
+    
+    pose_test := make_pose(*anim_player, *working_arena, 3.5);
     
     quit := false;
     while !quit {

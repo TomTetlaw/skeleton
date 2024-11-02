@@ -6,6 +6,12 @@ Mesh_Header :: struct {
     num_bones: int;
 }
 
+Anim_Header :: struct {
+    magic: string;
+    sample_count: int;
+    bone_count: int;
+}
+
 Serialized_Bone :: struct {
     id: s16;
     parent: s16;
@@ -20,18 +26,10 @@ Bone_Ids :: struct {
 Serialized_Animation :: struct {
     name: string;
     sample_count: int;
-    channels: [..] Serialized_Channel;
-}
-
-Serialized_Channel :: struct {
-    bone_id: s16;
-    frames: [..] Serialized_Keyframe;
-}
-
-Serialized_Keyframe :: struct {
-    position: Vec3;
-    rotation: Quaternion;
-    scale: Vec3;
+    bone_names: [..] string;
+    positions: [..] Vec3;
+    rotations: [..] Quaternion;
+    scales: [..] Vec3;
 }
 
 #scope_file

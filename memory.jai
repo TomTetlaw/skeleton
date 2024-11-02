@@ -47,6 +47,11 @@ arena_push_n :: (arena: *Arena, $T: Type, n: u64, $zero_count := false) -> [] T 
 arena_push_mark :: (arena: *Arena) -> u64 { return arena.used; }
 arena_pop_mark :: (arena: *Arena, mark: u64) { arena.used = mark; }
 
+arena_push_mark_defer :: (arena: *Arena) #expand {
+    `__arena_mark := arena_push_mark(arena);
+    defer arena_pop_mark(arena, __arena_mark);
+}
+
 Typed_Arena :: struct ($T: Type) {
     using #as arena: Arena;
 }

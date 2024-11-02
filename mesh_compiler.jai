@@ -1,6 +1,6 @@
 
 compile_mesh :: (path: string, dest: string) {
-    print("compiling mesh % -> %\n", path, dest);
+    print("compiling mesh %\n", path);
     
     scene := aiImportFile(path.data, MESH_PREPROCESS_FLAGS);
     if !scene {
@@ -115,7 +115,7 @@ compile_mesh :: (path: string, dest: string) {
     }
     
     node_name_map, mesh_transform_map := build_node_list(scene);
-    bone_name_map, bone_id_map  := build_bone_list(scene, *node_name_map);
+    bone_name_map, bone_id_map := build_bone_list(scene, *node_name_map);
     
     print_heirarchy :: (scene: *aiScene, node: *aiNode, spaces := 0) {
         node_transform := to_mat4(node.mTransformation);
@@ -241,13 +241,13 @@ compile_mesh :: (path: string, dest: string) {
             for weight_index: 0..num_weights-1 {
                 weight := new_bone.mWeights[weight_index];
                 
-                if (section_bone_ids[weight.mVertexId].a < 0) {
+                if section_bone_ids[weight.mVertexId].a < 0 {
                     section_weights[weight.mVertexId].x = weight.mWeight;
                     section_bone_ids[weight.mVertexId].a = bone.id;
-                } else if (section_bone_ids[weight.mVertexId].b < 0) {
+                } else if section_bone_ids[weight.mVertexId].b < 0 {
                     section_weights[weight.mVertexId].y = weight.mWeight;
                     section_bone_ids[weight.mVertexId].b = bone.id;
-                } else if (section_bone_ids[weight.mVertexId].c < 0) {
+                } else if section_bone_ids[weight.mVertexId].c < 0 {
                     section_weights[weight.mVertexId].z = weight.mWeight;
                     section_bone_ids[weight.mVertexId].c = bone.id;
                 } else {
@@ -306,52 +306,53 @@ compile_mesh :: (path: string, dest: string) {
         for channel_index: 0..num_channels-1 {
             channel := animation.mChannels[channel_index];
             
-            c: Serialized_Channel;
-            
             bone := table_find_pointer(*bone_name_map, to_string(channel.mNodeName));
-            if !bone {
-                print("Animation channel % referenced a non-existant bone!\n", to_string(channel.mNodeName));
-                continue;
-            }
+            if !bone continue; // this is a bone that we didn't care about (usually armature root object)
             
-            c.bone_id = bone.id;
+            name, found := table_find(*bone_id_map, bone.id);
+            array_add(*a.bone_names, name);
             
             num_positions := cast(int) channel.mNumPositionKeys;
             num_rotations := cast(int) channel.mNumRotationKeys;
             num_scales := cast(int) channel.mNumScalingKeys;
             
             for sample_index: 0..sample_count-1 {
-                k: Serialized_Keyframe;
-                
                 position_key := channel.mPositionKeys[min(sample_index, num_positions-1)];
                 rotation_key := channel.mRotationKeys[min(sample_index, num_rotations-1)];
                 scale_key := channel.mScalingKeys[min(sample_index, num_scales-1)];
                 
-                k.position = to_vec3(position_key.mValue);
-                k.rotation = to_quaternion(rotation_key.mValue);
-                k.scale = to_vec3(scale_key.mValue);
-                
-                array_add(*c.frames, k);
+                array_add(*a.positions, to_vec3(position_key.mValue));
+                array_add(*a.rotations, to_quaternion(rotation_key.mValue));
+                array_add(*a.scales, to_vec3(scale_key.mValue));
             }
-            
-            array_add(*a.channels, c);
         }
         
         array_add(*animations, a);
     }
     
     _, base := path_decomp(path);
-    mesh_out_dir := tprint("%/%", dest, base);
-    binary_mesh_out_path := tprint("%/%.mesh", mesh_out_dir, base);
-    text_mesh_out_path := tprint("%/%.mesh_text", mesh_out_dir, base);
+    mesh_out_dir := tprint("%/%", dest, to_lower_copy_new(base));
+    binary_mesh_out_path := tprint("%/%.mesh", mesh_out_dir, to_lower_copy_new(base));
+    text_mesh_out_path := tprint("%/%.mesh_text", mesh_out_dir, to_lower_copy_new(base));
+    binary_mesh_out_path = sanitize_filename(binary_mesh_out_path);
+    text_mesh_out_path = sanitize_filename(text_mesh_out_path);
     
     make_directory_if_it_does_not_exist(mesh_out_dir);
     
+    print(" -> %\n", binary_mesh_out_path);
+    print(" -> %\n", text_mesh_out_path);
     write_binary_mesh_file(binary_mesh_out_path, positions, colours, tex_coords, normals, weights, bone_ids, indices, final_bones);
     write_text_mesh_file(text_mesh_out_path, positions, colours, tex_coords, normals, weights, bone_ids, indices, final_bones);
     
     for * animations {
-        text_anim_out_path := tprint("%/%.anim_text", mesh_out_dir, it.name);
+        binary_anim_out_path := tprint("%/%.anim", mesh_out_dir, to_lower_copy_new(it.name));
+        text_anim_out_path:= tprint("%/%.anim_text", mesh_out_dir, to_lower_copy_new(it.name));
+        binary_anim_out_path = sanitize_filename(binary_anim_out_path);
+        text_anim_out_path = sanitize_filename(text_anim_out_path);
+        
+        print(" -> %\n", binary_anim_out_path);
+        print(" -> %\n", text_anim_out_path);
+        write_binary_anim_file(binary_anim_out_path, it, final_bones);
         write_text_anim_file(text_anim_out_path, it);
     }
 }
@@ -363,13 +364,48 @@ compile_mesh :: (path: string, dest: string) {
 #import "Sloppy_Math";
 #import "Sort";
 
+is_valid_filename_char :: (c: u8) -> bool {
+    if c < 0x20 return false;
+    
+    if c == {
+        case #char "<"; #through;
+        case #char ">"; #through;
+        case #char ":"; #through;
+        case #char "\""; #through;
+        case #char "/"; #through;
+        case #char "\\"; #through;
+        case #char "|"; #through;
+        case #char "?"; #through;
+        case #char "*";
+        return false;
+    }
+    
+    return true;
+}
+
+sanitize_filename :: (path: string) -> string {
+    dir, basename, ext := path_decomp(path);
+    for 0..basename.count-1 {
+        if !is_valid_filename_char(basename[it]) basename[it] = #char "_";
+    }
+    for 0..ext.count-1 {
+        if !is_valid_filename_char(ext[it]) ext[it] = #char "_";
+    }
+    out := tprint("%0%.%", dir, basename, ext);
+    return out;
+}
+
 write_binary_mesh_file :: (path: string, positions: [] Vec3, colours: [] Vec4, tex_coords: [] Vec2, normals: [] Vec3, weights: [] Vec3, bone_ids: [] Bone_Ids, indices: [] u32, bones: [] Serialized_Bone) {
-    file := file_open(path, true);
-    header := Mesh_Header.{ "MESH", positions.count, indices.count, bones.count };
-    file_write_string(*file, header.magic);
-    file_write(*file, *header.num_vertices, size_of(int));
-    file_write(*file, *header.num_indices, size_of(int));
-    file_write(*file, *header.num_bones, size_of(int));
+    file, success := file_open(path, true);
+    if !success {
+        print("Failed to open file % for writing\n", path);
+        return;
+    }
+    
+    file_write_string(*file, "MESH");
+    file_write(*file, *positions.count, size_of(int));
+    file_write(*file, *indices.count, size_of(int));
+    file_write(*file, *bones.count, size_of(int));
     file_write_array(*file, *positions);
     file_write_array(*file, *colours);
     file_write_array(*file, *tex_coords);
@@ -432,25 +468,56 @@ write_text_mesh_file :: (path: string, positions: [] Vec3, colours: [] Vec4, tex
     
     append(*builder, "\n");
     
-    write_entire_file(path, builder_to_string(*builder));
+    if !write_entire_file(path, builder_to_string(*builder)) {
+        print("Failed to open file % for writing\n", path);
+    }
+}
+
+write_binary_anim_file :: (path: string, anim: *Serialized_Animation, bones: [] Serialized_Bone) {
+    file, success := file_open(path, true);
+    if !success {
+        print("Failed to open file % for writing\n", path);
+        return;
+    }
+    
+    file_write_string(*file, "ANIM");
+    file_write(*file, *anim.sample_count, size_of(int));
+    file_write(*file, *bones.count, size_of(int));
+    file_write_string(*file, anim.name);
+    for anim.bone_names {
+        file_write_string(*file, it);
+    }
+    file_write_array(*file, *anim.positions);
+    file_write_array(*file, *anim.rotations);
+    file_write_array(*file, *anim.scales);
+    file_close(*file);
 }
 
 write_text_anim_file :: (path: string, anim: *Serialized_Animation) {
     builder: String_Builder;
     
     append(*builder, tprint("name = %\n", anim.name));
-    append(*builder, tprint("sample_count = %\n\n", anim.sample_count));
+    append(*builder, tprint("sample_count = %\n", anim.sample_count));
     
-    for anim.channels {
-        append(*builder, tprint("\n bone_id = %\n", it.bone_id));
-        for frame: it.frames {
-            append(*builder, tprint("  position = % % %\n", frame.position.x, frame.position.y, frame.position.z));
-            append(*builder, tprint("  rotation = % % % %\n", frame.rotation.x, frame.rotation.y, frame.rotation.z, frame.rotation.w));
-            append(*builder, tprint("  scale = % % %\n", frame.scale.x, frame.scale.y, frame.scale.z));
-        }
+    for anim.bone_names {
+        append(*builder, tprint("\n bone_name = %\n", it));
     }
     
-    write_entire_file(path, builder_to_string(*builder));
+    for anim.positions {
+        append(*builder, tprint("  position (frame %, index %) = %\n", it_index / anim.sample_count, it_index % anim.sample_count, it));
+    }
+    
+    for anim.rotations {
+        append(*builder, tprint("  rotation (frame %, index %) = %\n", it_index / anim.sample_count, it_index % anim.sample_count, it));
+    }
+    
+    for anim.scales {
+        append(*builder, tprint("  scale (frame %, index %) = %\n", it_index / anim.sample_count, it_index % anim.sample_count, it));
+    }
+    
+    if !write_entire_file(path, builder_to_string(*builder)) {
+        print("Failed to open file % for writing\n", path);
+    }
 }
 
 print_spaces :: (n: int) {

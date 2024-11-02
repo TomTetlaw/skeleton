@@ -1,5 +1,5 @@
 
-lerp :: (a: $T, B: T, t: float) -> T {
+lerp :: (a: $T, b: T, t: float) -> T {
     return a * (1 - t) + b * t;
 }
 
@@ -89,6 +89,16 @@ mat4_translation :: (v: Vec3) -> Mat4 {
     m._03 = v.x;
     m._13 = v.y;
     m._23 = -v.z;
+    
+    return m;
+}
+
+mat4_scale :: (v: Vec3) -> Mat4 {
+    m := mat4_identity();
+    
+    m._00 = v.x;
+    m._11 = v.y;
+    m._22 = v.z;
     
     return m;
 }
