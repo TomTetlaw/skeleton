@@ -52,6 +52,8 @@ arena_push_mark_defer :: (arena: *Arena) #expand {
     defer arena_pop_mark(arena, __arena_mark);
 }
 
+arena_reset :: (arena: *Arena) { arena.used = 0; }
+
 Typed_Arena :: struct ($T: Type) {
     using #as arena: Arena;
 }
@@ -76,9 +78,11 @@ for_expansion :: (arena: *Typed_Arena($T), body: Code, flags: For_Flags) #expand
 
 init_memory_system :: () {
     working_arena = create_arena();
+    frame_arena = create_arena();
 }
 
 working_arena: Arena;
+frame_arena: Arena;
 
 #scope_file
 

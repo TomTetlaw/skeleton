@@ -8,30 +8,8 @@ compile_mesh :: (path: string, dest: string) {
         return;
     }
     
-    Node :: struct {
-        id: int;
-        transform: Mat4;
-        parent: *Node;
-    }
-    
-    build_bone_name_list :: (scene: *aiScene) -> [..] string {
-        names: [..] string;
-        
-        num_meshes := cast(int) scene.mNumMeshes;
-        for m: 0..num_meshes-1 {
-            mesh := scene.mMeshes[m];
-            num_bones := cast(int) mesh.mNumBones;
-            for b: 0..num_bones-1 {
-                new_bone := mesh.mBones[b];
-                array_add_if_unique(*names, to_string(new_bone.mName));
-            }
-        }
-        
-        return names;
-    }
-    
-    build_node_list :: (scene: *aiScene) -> Table(string, Node), Table(int, Mat4) {
-        process_node :: (name_list: *[..] string, node: *aiNode, next_id: *int, node_name_map: *Table, mesh_transform_map: *Table) {
+    build_node_list :: (scene: *aiScene) -> Table(string, *Node), Table(int, Mat4), [..] *Node {
+        process_node :: (node: *aiNode, next_id: *int, node_name_map: *Table(string, *Node), mesh_transform_map: *Table(int, Mat4), ordered_nodes: *[..] *Node) {
             name := to_string(node.mName);
             transform := to_mat4(node.mTransformation);
             
@@ -43,78 +21,60 @@ compile_mesh :: (path: string, dest: string) {
                 }
             }
             
-            is_bone_node := array_find(<<name_list, name);
-            if (num_meshes == 0 && is_bone_node) {
+            if (num_meshes == 0) {
                 if !table_contains(node_name_map, name) {
-                    n: Node;
+                    n := New(Node);
                     n.id = <<next_id;
                     n.transform = transform;
+                    n.name = name;
+                    if node.mParent {
+                        p, found := table_find(node_name_map, to_string(node.mParent.mName));
+                        n.parent = p;
+                    }
                     <<next_id += 1;
                     table_add(node_name_map, name, n);
+                    array_add(ordered_nodes, n);
                 }
             }
             
             num_children := cast(int) node.mNumChildren;
             for 0..num_children-1 {
-                process_node(name_list, node.mChildren[it], next_id, node_name_map, mesh_transform_map);
-            }
-        }
-        
-        find_parents :: (node: *aiNode, node_name_map: *Table) {
-            name := to_string(node.mName);
-            n := table_find_pointer(node_name_map, name);
-            if n && node.mParent {
-                parent_name := to_string(node.mParent.mName);
-                p := table_find_pointer(node_name_map, parent_name);
-                if p n.parent = p;
-            }
-            
-            num_children := cast(int) node.mNumChildren;
-            for 0..num_children-1 {
-                find_parents(node.mChildren[it], node_name_map);
+                process_node(node.mChildren[it], next_id, node_name_map, mesh_transform_map, ordered_nodes);
             }
         }
         
         initial_id := 0;
-        node_name_map: Table(string, Node);
+        node_name_map: Table(string, *Node);
         mesh_transform_map: Table(int, Mat4);
-        bone_name_list := build_bone_name_list(scene);
-        process_node(*bone_name_list, scene.mRootNode, *initial_id, *node_name_map, *mesh_transform_map);
-        find_parents(scene.mRootNode, *node_name_map);
+        ordered_nodes: [..] *Node;
         
-        return node_name_map, mesh_transform_map;
+        process_node(scene.mRootNode, *initial_id, *node_name_map, *mesh_transform_map, *ordered_nodes);
+        
+        return node_name_map, mesh_transform_map, ordered_nodes;
     }
     
     build_bone_list :: (scene: *aiScene, node_name_map: *Table) -> Table(string, Serialized_Bone), Table(s16, string) {
         bone_name_map: Table(string, Serialized_Bone);
         bone_id_map: Table(s16, string);
         
-        num_meshes := cast(int) scene.mNumMeshes;
-        for m: 0..num_meshes-1 {
-            mesh := scene.mMeshes[m];
-            num_bones := cast(int) mesh.mNumBones;
-            for b: 0..num_bones-1 {
-                new_bone := mesh.mBones[b];
-                
-                bone, found := table_find(*bone_name_map, to_string(new_bone.mName));
-                if !found {
-                    n := table_find_pointer(node_name_map, to_string(new_bone.mName));
-                    bone: Serialized_Bone;
-                    bone.id = xx n.id;
-                    if n.parent bone.parent = xx n.parent.id;
-                    else bone.parent = -1;
-                    bone.name = to_string(new_bone.mName);
-                    bone.transform = n.transform;
-                    table_add(*bone_name_map, bone.name, bone);
-                    table_add(*bone_id_map, bone.id, bone.name);
-                }
+        for node_name_map {
+            bone := table_find_pointer(*bone_name_map, it.name);
+            if !bone {
+                bone: Serialized_Bone;
+                bone.id = xx it.id;
+                if it.parent bone.parent = xx it.parent.id;
+                else bone.parent = -1;
+                bone.name = it.name;
+                bone.transform = it.transform;
+                table_add(*bone_name_map, bone.name, bone);
+                table_add(*bone_id_map, bone.id, bone.name);
             }
         }
         
         return bone_name_map, bone_id_map;
     }
     
-    node_name_map, mesh_transform_map := build_node_list(scene);
+    node_name_map, mesh_transform_map, ordered_nodes := build_node_list(scene);
     bone_name_map, bone_id_map := build_bone_list(scene, *node_name_map);
     
     print_heirarchy :: (scene: *aiScene, node: *aiNode, spaces := 0) {
@@ -144,7 +104,22 @@ compile_mesh :: (path: string, dest: string) {
         }
     }
     
-    // print_heirarchy(scene, scene.mRootNode);
+    print_animation_channels :: (scene: *aiScene) {
+        num_animations := cast(int) scene.mNumAnimations;
+        for anim_index: 0..num_animations-1 {
+            animation := scene.mAnimations[anim_index];
+            print("animation: %\n", to_string(animation.mName));
+            
+            num_channels := cast(int) animation.mNumChannels;
+            for 0..num_channels-1 {
+                channel := animation.mChannels[it];
+                print(" channel: %\n", to_string(channel.mNodeName));
+            }
+        }
+    }
+    
+    //print_heirarchy(scene, scene.mRootNode);
+    //print_animation_channels(scene);
     
     positions: [..] Vec3;
     colours: [..] Vec4;
@@ -262,10 +237,9 @@ compile_mesh :: (path: string, dest: string) {
     
     final_bones: [..] Serialized_Bone;
     for bone_name_map {
-        parent_name, found := table_find(*bone_id_map, it.parent);
-        
         parent: *Serialized_Bone;
-        if found parent := table_find_pointer(*bone_name_map, parent_name);
+        parent_name, found := table_find(*bone_id_map, it.parent);
+        if found parent = table_find_pointer(*bone_name_map, parent_name);
         
         local_transform: Mat4 = ---;
         if parent local_transform = mat4_inverse(parent.transform) * it.transform;
@@ -282,6 +256,17 @@ compile_mesh :: (path: string, dest: string) {
     
     bubble_sort(final_bones, (a, b) => cast(s64) (a.id - b.id));
     
+    find_channel :: (anim: *aiAnimation, name: string) -> *aiNodeAnim {
+        num_channels := cast(int) anim.mNumChannels;
+        for channel_index: 0..num_channels-1 {
+            if equal(name, to_string(anim.mChannels[channel_index].mNodeName)) {
+                return anim.mChannels[channel_index];
+            }
+        }
+        
+        return null;
+    }
+    
     animations: [..] Serialized_Animation;
     num_animations := cast(int) scene.mNumAnimations;
     for anim_index: 0..num_animations-1 {
@@ -292,8 +277,10 @@ compile_mesh :: (path: string, dest: string) {
         
         sample_count := 0;
         num_channels := cast(int) animation.mNumChannels;
-        for channel_index: 0..num_channels-1 {
-            channel := animation.mChannels[channel_index];
+        for ordered_nodes {
+            channel := find_channel(animation, it.name);
+            if !channel continue;
+            
             num_positions := cast(int) channel.mNumPositionKeys;
             num_rotations := cast(int) channel.mNumRotationKeys;
             num_scales := cast(int) channel.mNumScalingKeys;
@@ -303,27 +290,42 @@ compile_mesh :: (path: string, dest: string) {
         
         a.sample_count = sample_count;
         
-        for channel_index: 0..num_channels-1 {
-            channel := animation.mChannels[channel_index];
+        for ordered_nodes {
+            array_add(*a.bone_names, it.name);
             
-            bone := table_find_pointer(*bone_name_map, to_string(channel.mNodeName));
-            if !bone continue; // this is a bone that we didn't care about (usually armature root object)
-            
-            name, found := table_find(*bone_id_map, bone.id);
-            array_add(*a.bone_names, name);
+            channel := find_channel(animation, it.name);
+            if !channel {
+                for sample_index: 0..sample_count-1 {
+                    array_add(*a.positions, .{0, 0, 0});
+                    array_add(*a.rotations, .{0, 0, 0, 1});
+                    array_add(*a.scales, .{1, 1, 1});
+                }
+                
+                continue;
+            }
             
             num_positions := cast(int) channel.mNumPositionKeys;
             num_rotations := cast(int) channel.mNumRotationKeys;
             num_scales := cast(int) channel.mNumScalingKeys;
             
             for sample_index: 0..sample_count-1 {
-                position_key := channel.mPositionKeys[min(sample_index, num_positions-1)];
-                rotation_key := channel.mRotationKeys[min(sample_index, num_rotations-1)];
-                scale_key := channel.mScalingKeys[min(sample_index, num_scales-1)];
+                position := Vec3.{0, 0, 0};
+                if sample_index < num_positions position = to_vec3(channel.mPositionKeys[sample_index].mValue);
                 
-                array_add(*a.positions, to_vec3(position_key.mValue));
-                array_add(*a.rotations, to_quaternion(rotation_key.mValue));
-                array_add(*a.scales, to_vec3(scale_key.mValue));
+                rotation := Quaternion.{0, 0, 0, 1};
+                if sample_index < num_rotations rotation = to_quaternion(channel.mRotationKeys[sample_index].mValue);
+                
+                scale := Vec3.{1, 1, 1};
+                if sample_index < num_scales scale = to_vec3(channel.mScalingKeys[sample_index].mValue);
+                
+                local_transform := mat4_translation(position) *
+                    mat4_scale(scale) * mat4_rotation(rotation) * it.transform;
+                
+                frame_position, frame_rotation, frame_scale := mat4_decompose(local_transform);
+                
+                array_add(*a.positions, frame_position);
+                array_add(*a.rotations, frame_rotation);
+                array_add(*a.scales, frame_scale);
             }
         }
         
@@ -363,6 +365,13 @@ compile_mesh :: (path: string, dest: string) {
 #import "Hash_Table";
 #import "Sloppy_Math";
 #import "Sort";
+
+Node :: struct {
+    name: string;
+    id: int;
+    transform: Mat4;
+    parent: *Node;
+}
 
 is_valid_filename_char :: (c: u8) -> bool {
     if c < 0x20 return false;
@@ -556,7 +565,7 @@ to_mat4 :: (m: aiMatrix4x4) -> Mat4 {
     return out;
 }
 to_quaternion :: (q: aiQuaternion) -> Quaternion {
-    return .{q.x, q.y, q.z, q.w};
+    return .{q.w, q.z, q.y, q.x};
 }
 
 per_triangle_uv :: (position: Vec3, v0: Vec3, v1: Vec3, v2: Vec3) -> Vec2 {

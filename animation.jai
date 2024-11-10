@@ -3,17 +3,28 @@ Anim_Player :: struct {
     mesh: *Mesh;
     anim: *Animation;
     
-    speed := 1.0;
-    fps := 30.0;
+    playing: bool;
+    pose: Anim_Pose;
+    
+    speed := 0.01;
+    fps := 30;
 }
 
 Anim_Pose :: struct {
     // the length of this array will be equal
     // to the number of bones in the skeleton
     transforms: [] Mat4;
+    parent_transforms: [] Mat4;
+    skinning_transforms: [] Mat4;
 }
 
-make_pose :: (player: *Anim_Player, arena: *Arena, time: float) -> Anim_Pose {
+update_animation :: (player: *Anim_Player) {
+    if !player.playing return;
+    
+    update_pose(player, *frame_arena, g_time, *player.pose);
+}
+
+update_pose :: (player: *Anim_Player, arena: *Arena, time: float, pose: *Anim_Pose) {
     mesh := player.mesh;
     anim := player.anim;
     
@@ -21,7 +32,9 @@ make_pose :: (player: *Anim_Player, arena: *Arena, time: float) -> Anim_Pose {
     frame_index := cast(int) time;
     lerp_t := time - frame_index;
     
-    transforms := arena_push_n(arena, Mat4, xx anim.bone_count);
+    pose.parent_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
+    pose.transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
+    pose.skinning_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
     
     arena_push_mark_defer(arena);
     
@@ -30,35 +43,37 @@ make_pose :: (player: *Anim_Player, arena: *Arena, time: float) -> Anim_Pose {
     scales := arena_push_n(arena, Vec3, xx anim.bone_count);
     bones := arena_push_n(arena, *Bone, xx anim.bone_count);
     
-    for 0..anim.bone_count-1 {
-        bone := find_bone(mesh.skeleton, anim.bone_names[it]);
-        bones[it] = bone;
+    for anim.bone_names {
+        i0 := ((it_index * anim.sample_count) + frame_index);
+        i1 := (i0 + 1) % anim.sample_count;
+        positions[it_index] = lerp(anim.positions[i0], anim.positions[i1], lerp_t);
+        rotations[it_index] = slerp(anim.rotations[i0], anim.rotations[i1], lerp_t);
+        scales[it_index] = lerp(anim.scales[i0], anim.scales[i1], lerp_t);
     }
     
-    for 0..anim.bone_count-1 {
-        index := (it * anim.sample_count) + frame_index;
-        positions[it] = lerp(anim.positions[index], anim.positions[index + 1], lerp_t);
-        rotations[it] = slerp(anim.rotations[index], anim.rotations[index + 1], lerp_t);
-        scales[it] = lerp(anim.scales[index], anim.scales[index + 1], lerp_t);
-    }
-    
-    for bones {
+    for anim.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        if !bone { // ignore bones not found in skeleton
+            pose.transforms[it_index] = mat4_identity();
+            pose.parent_transforms[it_index] = mat4_identity();
+            pose.skinning_transforms[it_index] = mat4_identity();
+            continue;
+        }
+        
         local_transform := mat4_translation(positions[it_index]) *
             mat4_scale(scales[it_index]) * mat4_rotation(rotations[it_index]);
         
-        parent := it.parent;
-        if parent transforms[it_index] = transforms[parent.id] * local_transform;
-        else transforms[it_index] = local_transform;
+        if bone.parent {
+            pose.transforms[it_index] = pose.transforms[bone.parent.id] * local_transform;
+            pose.parent_transforms[it_index] = pose.transforms[bone.parent.id];
+        }
+        else {
+            pose.transforms[it_index] = local_transform;
+            pose.parent_transforms[it_index] = mat4_identity();
+        }
+        
+        pose.skinning_transforms[it_index] = pose.transforms[it_index] * bone.inverse_transform;
     }
-    
-    for * transforms {
-        bone := bones[it_index];
-        <<it = it * bone.inverse_transform;
-    }
-    
-    pose: Anim_Pose;
-    pose.transforms = transforms;
-    return pose;
 }
 
 #scope_file

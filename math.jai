@@ -29,6 +29,8 @@ operator- :: (a: Vec3, b: Vec3) -> Vec3 { return .{a.x - b.x, a.y - b.y, a.z - b
 operator* :: (a: Vec3, b: Vec3) -> Vec3 { return .{a.x * b.x, a.y * b.y, a.z * b.z}; }
 operator* :: (a: Vec3, b: float) -> Vec3 { return .{a.x * b, a.y * b, a.z * b}; }
 
+operator- :: (a: Vec3) -> Vec3 { return .{-a.x, -a.y, -a.z}; }
+
 length :: (a: Vec3) -> float { return sqrt(a.x*a.x + a.y*a.y + a.z*a.z); }
 dot :: (a: Vec3, b: Vec3) -> float { return a.x*b.x + a.y*b.y + a.z*b.z; }
 distance :: (a: Vec3, b: Vec3) -> float { return length(a - b); }
@@ -249,6 +251,71 @@ mat4_inverse :: (m: Mat4) -> Mat4, bool {
     }
     
     return ident, true;
+}
+
+get_rotation :: (using m: Mat4) -> Quaternion {  // @Polymorph: Make it work on Matrix4 || Matrix3.
+    
+    // Algorithm in Ken Shoemake's article in 1987 SIGGRAPH course notes
+    // article "Quaternion Calculus and Fast Animation".
+    
+    // @Cleanup: We are kinda cheating here because AnyMatrix3 doesn't
+    // define coef[], because we don't have a way to do that with 'interface'
+    // yet. Something to think about ... !
+    
+    q: Quaternion = ---;
+    trace := _00 + _11 + _22;
+    
+    if trace > 0 {
+        // |w| > 1/2, may as well choose w > 1/2
+        s := sqrt(trace + 1);  // 2w
+        
+        q.w = s * 0.5;
+        s = 0.5 / s;       // 1/(4w)
+        
+        q.x = (coef[2][1] - coef[1][2]) * s;
+        q.y = (coef[0][2] - coef[2][0]) * s;
+        q.z = (coef[1][0] - coef[0][1]) * s;
+    } else {
+        // |w| <= 1/2
+        i := 0;
+        if (coef[1][1] > coef[0][0]) i = 1;
+        if (coef[2][2] > coef[i][i]) i = 2;
+        
+        j := (1 << i) & 3; // i + 1 modulo 3.
+        k := (1 << j) & 3;
+        
+        s := sqrt(coef[i][i] - coef[j][j] - coef[k][k] + 1);
+        
+        q.component[i] = s * 0.5;
+        s = 0.5 / s;
+        q.component[j] = (coef[i][j] + coef[j][i]) * s;
+        q.component[k] = (coef[k][i] + coef[i][k]) * s;
+        q.w = (coef[k][j] - coef[j][k]) * s;
+    }
+    
+    //assert(coef[3][3] == 1.0);
+    //if (coef[3][3] != 1.0) q = q.scale(1.0 / sqrt(coef[3][3]));
+    
+    normalize_or_identity(*q);
+    return q;
+}
+
+mat4_decompose :: (m: Mat4) -> Vec3, Quaternion, Vec3 {
+    translation := Vec3.{
+        m._03,
+        m._13,
+        m._23
+    };
+    
+	rotation := get_rotation(m);
+    
+	scale := Vec3.{
+        length(Vec3.{m._11, m._21, m._31}),
+        length(Vec3.{m._12, m._22, m._32}),
+        length(Vec3.{m._13, m._23, m._33}),
+    };
+    
+	return translation, rotation, scale;
 }
 
 multiply :: (m: Mat4, n: Mat4) -> Mat4 {

@@ -38,8 +38,7 @@ main :: () {
     anim_player: Anim_Player;
     anim_player.mesh = mesh_test;
     anim_player.anim = anim_test;
-    
-    pose_test := make_pose(*anim_player, *working_arena, 3.5);
+    anim_player.playing = true;
     
     quit := false;
     while !quit {
@@ -92,13 +91,18 @@ main :: () {
         
         mesh_transform := mat4_translation(.{0, 0, 10});
         draw_mesh(mesh_test, mesh_transform);
-        draw_skeleton(mesh_test.skeleton, mesh_transform, .{1, 0, 0, 1});
+        //draw_skeleton(mesh_test.skeleton, mesh_transform);
+        
+        update_animation(*anim_player);
+        draw_pose(*anim_player.pose, mesh_transform);
         
         renderer_draw_frame();
         
         SDL_GL_SwapWindow(window);
         
         frame_keys.count = 0;
+        
+        arena_reset(*frame_arena);
     }
 }
 

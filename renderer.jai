@@ -45,22 +45,40 @@ init_renderer :: () {
 draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     direction := normalize(end - start);
     up := Vec3.{0, 1, 0};
-    right := normalize(cross_product(up, direction));
     
-    right = right * thickness * 0.5;
+    right := normalize(cross_product(up, direction)) * thickness * 0.5;
+    forward := normalize(cross_product(direction, right)) * thickness * 0.5;
     
-    positions: [6] Vec3;
-    positions[0] = .{start.x + right.x, start.y + right.y, start.z + right.z};
-    positions[1] = .{start.x - right.x, start.y - right.y, start.z - right.z};
-    positions[2] = .{end.x + right.x, end.y + right.y, end.z + right.z};
-    positions[3] = .{end.x + right.x, end.y + right.y, end.z + right.z};
-    positions[4] = .{start.x - right.x, start.y - right.y, start.z - right.z};
-    positions[5] = .{end.x - right.x, end.y - right.y, end.z - right.z};
+    positions: [8] Vec3;
+    positions[0] = start + right + forward;
+    positions[1] = start - right + forward;
+    positions[2] = start - right - forward;
+    positions[3] = start + right - forward;
+    positions[4] = end + right + forward;
+    positions[5] = end - right + forward;
+    positions[6] = end - right - forward;
+    positions[7] = end + right - forward;
     
-    tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
-    colours := Vec4.[colour, colour, colour, colour, colour, colour];
-    normals := Vec3.[.{0, 0, 0}, .{0, 0, 0}, .{0, 0, 0}, .{0, 0, 0}, .{0, 0, 0}, .{0, 0, 0}];
-    indices := u32.[0, 1, 2, 3, 4, 5];
+    colours := Vec4.[colour, colour, colour, colour, colour, colour, colour, colour];
+    
+    normals := Vec3.[.{},.{},.{},.{},.{},.{},.{},.{}];
+    
+    indices := u32.[
+                    // Front face
+                    0, 1, 5, 0, 5, 4,
+                    // Back face
+                    3, 2, 6, 3, 6, 7,
+                    // Left face
+                    1, 2, 6, 1, 6, 5,
+                    // Right face
+                    0, 3, 7, 0, 7, 4,
+                    // Top face
+                    0, 1, 2, 0, 2, 3,
+                    // Bottom face
+                    4, 5, 6, 4, 6, 7
+                    ];
+    
+    tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
     
     first_vertex, first_index := write_render_buffers(positions, colours, tex_coords, normals, indices);
     
@@ -76,7 +94,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     add_render_command(command);
 }
 
-draw_skeleton :: (skeleton: *Skeleton, transform: Mat4, colour: Vec4) {
+draw_skeleton :: (skeleton: *Skeleton, transform: Mat4) {
     colours := Vec4.[
                      .{1, 0, 0, 1},    // Red
                      .{0, 1, 0, 1},    // Green
@@ -111,8 +129,42 @@ draw_skeleton :: (skeleton: *Skeleton, transform: Mat4, colour: Vec4) {
             world_space_transform._23
         };
         
-		draw_line(start, end, 0.5, colours[it_index%9]);
+		draw_line(start, end, 0.5, colours[it_index%10]);
 	}
+}
+
+draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
+    colours := Vec4.[
+                     .{1, 0, 0, 1},    // Red
+                     .{0, 1, 0, 1},    // Green
+                     .{0, 0, 1, 1},    // Blue
+                     .{1, 1, 0, 1},    // Yellow
+                     .{1, 0, 1, 1},    // Magenta
+                     .{0, 1, 1, 1},    // Cyan
+                     .{0.5, 0.5, 0.5, 1},  // Grey
+                     .{1, 0.5, 0, 1},  // Orange
+                     .{0.5, 0, 0.5, 1},  // Purple
+                     .{0.5, 1, 0, 1},  // Lime
+                     ];
+    
+    for pose.transforms {
+        parent_transform := transform * pose.parent_transforms[it_index];
+		world_space_transform := transform * it;
+        
+		start := Vec3.{
+            parent_transform._03,
+            parent_transform._13,
+            parent_transform._23
+        };
+        
+		end := Vec3.{
+            world_space_transform._03,
+            world_space_transform._13,
+            world_space_transform._23
+        };
+        
+        draw_line(start, end, 0.1, colours[it_index % 10]);
+    }
 }
 
 draw_mesh :: (mesh: *Mesh, transform: Mat4) {

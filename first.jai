@@ -14,6 +14,7 @@ build :: () {
     options.output_path = "build";
     options.intermediate_path = "build";
     options.debug_for_expansions = true;
+    set_optimization(*options, .VERY_DEBUG);
     
     set_build_options(options, workspace);
     

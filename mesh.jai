@@ -75,15 +75,17 @@ load_mesh :: (path: string) -> *Mesh {
         bone.id = it.id;
         bone.name = it.name;
         
+        bone.transform = it.transform;
+        
         if it.parent == -1 {
             bone.parent = null;
-            bone.transform = it.transform;
+            bone.inverse_transform = bone.transform;
         } else {
             bone.parent = *bones[it.parent];
-            bone.transform = bone.parent.transform * it.transform;
+            bone.inverse_transform = bone.parent.inverse_transform * bone.transform;
         }
         
-        bone.inverse_transform = mat4_inverse(bone.transform);
+        bone.inverse_transform = mat4_inverse(bone.inverse_transform);
         
         hash := get_hash(it.name) % 512;
         bone_name_map[hash] = it_index;
