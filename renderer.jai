@@ -12,7 +12,6 @@ init_renderer :: () {
     commands.count = 0;
     
     position_buffer = create_buffer("position_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
-    colour_buffer = create_buffer("colour_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec4));
     tex_coord_buffer = create_buffer("tex_coord_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec2));
     normal_buffer = create_buffer("normal_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
     index_buffer = create_buffer("index_buffer", GL_ELEMENT_ARRAY_BUFFER, MAX_INDICES * size_of(u32));
@@ -24,17 +23,13 @@ init_renderer :: () {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
     
-    glBindBuffer(GL_ARRAY_BUFFER, colour_buffer);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, size_of(Vec4), xx 0);
-    
     glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, size_of(Vec2), xx 0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, size_of(Vec2), xx 0);
     
     glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);
-    glEnableVertexAttribArray(3);
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
     
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -59,8 +54,6 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     positions[6] = end - right - forward;
     positions[7] = end + right - forward;
     
-    colours := Vec4.[colour, colour, colour, colour, colour, colour, colour, colour];
-    
     normals := Vec3.[.{},.{},.{},.{},.{},.{},.{},.{}];
     
     indices := u32.[
@@ -80,7 +73,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     
     tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
     
-    first_vertex, first_index := write_render_buffers(positions, colours, tex_coords, normals, indices);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -169,12 +162,11 @@ draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
 
 draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     positions := mesh.positions;
-    colours := mesh.colours;
     tex_coords := mesh.tex_coords;
     indices := mesh.indices;
     normals := mesh.normals;
     
-    first_vertex, first_index := write_render_buffers(positions, colours, tex_coords, normals, indices);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -248,7 +240,6 @@ add_render_command :: (command: Draw_Command)  #no_abc {
 }
 
 position_buffer: u32;
-colour_buffer: u32;
 tex_coord_buffer: u32;
 normal_buffer: u32;
 index_buffer: u32;
@@ -283,8 +274,7 @@ create_buffer :: (name: string, target: u32, size: int) -> u32 {
     return id;
 }
 
-write_render_buffers :: (positions: [] Vec3, colours: [] Vec4, tex_coords: [] Vec2, normals: [] Vec3, indices: [] u32) -> int, int {
-    assert(colours.count == positions.count);
+write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Vec3, indices: [] u32) -> int, int {
     assert(tex_coords.count == positions.count);
     assert(normals.count == positions.count);
     
@@ -300,8 +290,6 @@ write_render_buffers :: (positions: [] Vec3, colours: [] Vec4, tex_coords: [] Ve
     
     glBindBuffer(GL_ARRAY_BUFFER, position_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), positions.count * size_of(Vec3), positions.data);
-    glBindBuffer(GL_ARRAY_BUFFER, colour_buffer);
-    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec4), colours.count * size_of(Vec4), colours.data);
     glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec2), tex_coords.count * size_of(Vec2), tex_coords.data);
     glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);

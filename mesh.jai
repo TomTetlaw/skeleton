@@ -1,4 +1,8 @@
 
+Bone_Ids :: struct {
+    a, b, c, d: s16;
+}
+
 Bone :: struct {
     id: int;
     name: string;
@@ -15,7 +19,6 @@ Skeleton :: struct {
 Mesh :: struct {
     path: string;
     positions: [] Vec3;
-    colours: [] Vec4;
     tex_coords: [] Vec2;
     normals: [] Vec3;
     indices: [] u32;
@@ -59,7 +62,6 @@ load_mesh :: (path: string) -> *Mesh {
     }
     
     positions := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
-    colours := file_read_array(*file, *mesh_arena, Vec4, header.num_vertices);
     tex_coords := file_read_array(*file, *mesh_arena, Vec2, header.num_vertices);
     normals := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
     weights := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
@@ -99,7 +101,6 @@ load_mesh :: (path: string) -> *Mesh {
     mesh := arena_push(*meshes);
     mesh.path = path;
     mesh.positions = positions;
-    mesh.colours = colours;
     mesh.tex_coords = tex_coords;
     mesh.normals = normals;
     mesh.indices = indices;
@@ -157,6 +158,35 @@ load_animation :: (path: string) -> *Animation {
 
 #import "Basic";
 #import "Sort";
+
+Mesh_Header :: struct {
+    magic: string;
+    num_vertices: int;
+    num_indices: int;
+    num_bones: int;
+}
+
+Anim_Header :: struct {
+    magic: string;
+    sample_count: int;
+    bone_count: int;
+}
+
+Serialized_Bone :: struct {
+    id: s16;
+    parent: s16;
+    name: string;
+    transform: Mat4;
+}
+
+Serialized_Animation :: struct {
+    name: string;
+    sample_count: int;
+    bone_names: [..] string;
+    positions: [..] Vec3;
+    rotations: [..] Quaternion;
+    scales: [..] Vec3;
+}
 
 file_read_bones :: (file: *File, arena: *Arena, count: int) -> [] Serialized_Bone {
     bones := arena_push_n(arena, Serialized_Bone, xx count);

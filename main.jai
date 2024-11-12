@@ -30,8 +30,6 @@ main :: () {
     
     frame_keys.allocator = temp;
     
-#if DEBUG_MESH_COMPILER compile_mesh("../mesh_source_data/man2.fbx", "build/mesh");
-    
     mesh_test := load_mesh("mesh/man2/man2.mesh");
     anim_test := load_animation("mesh/man2/man_dance.anim");
     
@@ -90,7 +88,7 @@ main :: () {
         update_camera(*camera);
         
         mesh_transform := mat4_translation(.{0, 0, 10});
-        draw_mesh(mesh_test, mesh_transform);
+        //draw_mesh(mesh_test, mesh_transform);
         //draw_skeleton(mesh_test.skeleton, mesh_transform);
         
         update_animation(*anim_player);
