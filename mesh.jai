@@ -6,8 +6,8 @@ Bone_Ids :: struct {
 Bone :: struct {
     id: int;
     name: string;
-    transform: Mat4;
-    inverse_transform: Mat4;
+    local_bind_transform: Mat4;
+    inverse_bind_transform: Mat4;
     parent: *Bone;
 }
 
@@ -77,17 +77,17 @@ load_mesh :: (path: string) -> *Mesh {
         bone.id = it.id;
         bone.name = it.name;
         
-        bone.transform = it.transform;
+        bone.local_bind_transform = it.transform;
         
         if it.parent == -1 {
             bone.parent = null;
-            bone.inverse_transform = bone.transform;
+            bone.inverse_bind_transform = bone.local_bind_transform;
         } else {
             bone.parent = *bones[it.parent];
-            bone.inverse_transform = bone.parent.inverse_transform * bone.transform;
+            bone.inverse_bind_transform = bone.parent.inverse_bind_transform * bone.local_bind_transform;
         }
         
-        bone.inverse_transform = mat4_inverse(bone.inverse_transform);
+        bone.inverse_bind_transform = mat4_inverse(bone.inverse_bind_transform);
         
         hash := get_hash(it.name) % 512;
         bone_name_map[hash] = it_index;

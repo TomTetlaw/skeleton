@@ -30,8 +30,8 @@ main :: () {
     
     frame_keys.allocator = temp;
     
-    mesh_test := load_mesh("mesh/man2/man2.mesh");
-    anim_test := load_animation("mesh/man2/man_dance.anim");
+    mesh_test := load_mesh("mesh/man/test.mesh");
+    anim_test := load_animation("mesh/man/test.anim");
     
     anim_player: Anim_Player;
     anim_player.mesh = mesh_test;
@@ -86,12 +86,10 @@ main :: () {
         }
         
         update_camera(*camera);
+        update_animation(*anim_player);
         
         mesh_transform := mat4_translation(.{0, 0, 10});
-        //draw_mesh(mesh_test, mesh_transform);
-        //draw_skeleton(mesh_test.skeleton, mesh_transform);
-        
-        update_animation(*anim_player);
+        draw_mesh(mesh_test, mesh_transform);
         draw_pose(*anim_player.pose, mesh_transform);
         
         renderer_draw_frame();

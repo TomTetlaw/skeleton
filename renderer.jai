@@ -81,49 +81,10 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     command.first_index = first_index;
     command.index_count = indices.count;
     command.transform = mat4_identity();
-    command.colour = .{1, 1, 1, 1};
+    command.colour = colour;
     command.flags = .NO_DEPTH_TEST | .NO_BACKFACE_CULL;
     
     add_render_command(command);
-}
-
-draw_skeleton :: (skeleton: *Skeleton, transform: Mat4) {
-    colours := Vec4.[
-                     .{1, 0, 0, 1},    // Red
-                     .{0, 1, 0, 1},    // Green
-                     .{0, 0, 1, 1},    // Blue
-                     .{1, 1, 0, 1},    // Yellow
-                     .{1, 0, 1, 1},    // Magenta
-                     .{0, 1, 1, 1},    // Cyan
-                     .{0.5, 0.5, 0.5, 1},  // Grey
-                     .{1, 0.5, 0, 1},  // Orange
-                     .{0.5, 0, 0.5, 1},  // Purple
-                     .{0.5, 1, 0, 1},  // Lime
-                     ];
-    
-	for * skeleton.bones {
-		parent_transform: Mat4 = ---;
-        parent := it.parent;
-        
-		if parent parent_transform = transform * parent.transform;
-		else parent_transform = transform;
-        
-		world_space_transform := transform * it.transform;
-        
-		start := Vec3.{
-            parent_transform._03,
-            parent_transform._13,
-            parent_transform._23
-        };
-        
-		end := Vec3.{
-            world_space_transform._03,
-            world_space_transform._13,
-            world_space_transform._23
-        };
-        
-		draw_line(start, end, 0.5, colours[it_index%10]);
-	}
 }
 
 draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
@@ -140,20 +101,20 @@ draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
                      .{0.5, 1, 0, 1},  // Lime
                      ];
     
-    for pose.transforms {
-        parent_transform := transform * pose.parent_transforms[it_index];
+    for pose.model_space_transforms {
+        parent_transform := transform * pose.parent_model_space_transforms[it_index];
 		world_space_transform := transform * it;
         
 		start := Vec3.{
-            parent_transform._03,
-            parent_transform._13,
-            parent_transform._23
+            parent_transform._14,
+            parent_transform._24,
+            parent_transform._34
         };
         
 		end := Vec3.{
-            world_space_transform._03,
-            world_space_transform._13,
-            world_space_transform._23
+            world_space_transform._14,
+            world_space_transform._24,
+            world_space_transform._34
         };
         
         draw_line(start, end, 0.1, colours[it_index % 10]);

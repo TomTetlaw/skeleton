@@ -13,8 +13,8 @@ Anim_Player :: struct {
 Anim_Pose :: struct {
     // the length of this array will be equal
     // to the number of bones in the skeleton
-    transforms: [] Mat4;
-    parent_transforms: [] Mat4;
+    model_space_transforms: [] Mat4;
+    parent_model_space_transforms: [] Mat4;
     skinning_transforms: [] Mat4;
 }
 
@@ -32,8 +32,8 @@ update_pose :: (player: *Anim_Player, arena: *Arena, time: float, pose: *Anim_Po
     frame_index := cast(int) time;
     lerp_t := time - frame_index;
     
-    pose.parent_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
-    pose.transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
+    pose.parent_model_space_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
+    pose.model_space_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
     pose.skinning_transforms = arena_push_n(arena, Mat4, xx anim.bone_count);
     
     arena_push_mark_defer(arena);
@@ -53,26 +53,20 @@ update_pose :: (player: *Anim_Player, arena: *Arena, time: float, pose: *Anim_Po
     
     for anim.bone_names {
         bone := find_bone(player.mesh.skeleton, it);
-        if !bone { // ignore bones not found in skeleton
-            pose.transforms[it_index] = mat4_identity();
-            pose.parent_transforms[it_index] = mat4_identity();
-            pose.skinning_transforms[it_index] = mat4_identity();
-            continue;
-        }
         
         local_transform := mat4_translation(positions[it_index]) *
             mat4_scale(scales[it_index]) * mat4_rotation(rotations[it_index]);
         
         if bone.parent {
-            pose.transforms[it_index] = pose.transforms[bone.parent.id] * local_transform;
-            pose.parent_transforms[it_index] = pose.transforms[bone.parent.id];
+            pose.model_space_transforms[it_index] = pose.model_space_transforms[bone.parent.id] * local_transform;
+            pose.parent_model_space_transforms[it_index] = pose.model_space_transforms[bone.parent.id];
         }
         else {
-            pose.transforms[it_index] = local_transform;
-            pose.parent_transforms[it_index] = mat4_identity();
+            pose.model_space_transforms[it_index] = local_transform;
+            pose.parent_model_space_transforms[it_index] = mat4_identity();
         }
         
-        pose.skinning_transforms[it_index] = pose.transforms[it_index] * bone.inverse_transform;
+        pose.skinning_transforms[it_index] = pose.model_space_transforms[it_index] * bone.inverse_bind_transform;
     }
 }
 
