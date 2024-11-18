@@ -70,7 +70,11 @@ load_mesh :: (path: string) -> *Mesh {
     
     serialized_bones := file_read_bones(*file, *mesh_arena, header.num_bones);
     bones := arena_push_n(*mesh_arena, Bone, xx header.num_bones);
-    bone_name_map := arena_push_n(*mesh_arena, int, 512);
+    bone_name_map := arena_push_n(*mesh_arena, int, BONE_NAME_MAP_SIZE);
+    
+    for * bone_name_map {
+        it.* = -1;
+    }
     
     for serialized_bones {
         bone: Bone;
@@ -87,11 +91,16 @@ load_mesh :: (path: string) -> *Mesh {
             bone.inverse_bind_transform = bone.parent.inverse_bind_transform * bone.local_bind_transform;
         }
         
-        bone.inverse_bind_transform = mat4_inverse(bone.inverse_bind_transform);
+        hash := djb2_hash(it.name) % BONE_NAME_MAP_SIZE;
+        assert(bone_name_map[hash] == -1);
         
-        hash := get_hash(it.name) % 512;
         bone_name_map[hash] = it_index;
+        
         bones[it_index] = bone;
+    }
+    
+    for * bones {
+        it.inverse_bind_transform = mat4_inverse(it.inverse_bind_transform);
     }
     
     skeleton := arena_push(*mesh_arena, Skeleton);
@@ -112,7 +121,7 @@ load_mesh :: (path: string) -> *Mesh {
 }
 
 find_bone :: (skeleton: *Skeleton, name: string) -> *Bone {
-    hash := get_hash(name) % 512;
+    hash := djb2_hash(name) % BONE_NAME_MAP_SIZE;
     return *skeleton.bones[skeleton.bone_name_map[hash]];
 }
 
@@ -158,6 +167,8 @@ load_animation :: (path: string) -> *Animation {
 
 #import "Basic";
 #import "Sort";
+
+BONE_NAME_MAP_SIZE :: 2048;
 
 Mesh_Header :: struct {
     magic: string;

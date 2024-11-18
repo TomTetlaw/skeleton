@@ -27,11 +27,41 @@ mat4_rotation :: (q: Quaternion) -> Mat4 {
     set_rotation(*m, q);
     return m;
 }
+mat4_transpose :: transpose;
+
+quat_from_matrix :: get_rotation;
+
+nlerp_shortest :: (a: Quaternion, b: Quaternion, t: float) -> Quaternion
+{
+    first := a;
+    second := b;
+    if dot(first, second) < 0
+        second = -second;
+    return nlerp(first, second, t);
+}
 
 quat_axis_angle :: (axis: Vec3, angle: float) -> Quaternion {
     q: Quaternion;
     set_from_axis_and_angle(*q, axis.x, axis.y, axis.z, angle);
     return q;
+}
+
+mat4_decompose :: (m: Mat4) -> Vector3, Quaternion, Vector3 {
+	translation := Vec3.{
+        m._14,
+        m._24,
+        m._34
+    };
+    
+	rotation := quat_from_matrix(m);
+    
+	scale := Vec3.{
+        length(Vec3.{m._11, m._21, m._31}),
+        length(Vec3.{m._12, m._22, m._32}),
+        length(Vec3.{m._13, m._23, m._33})
+    };
+    
+	return translation, rotation, scale;
 }
 
 mat4_euler_rotation :: (rotation: Vec3) -> Mat4 {

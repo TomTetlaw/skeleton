@@ -25,7 +25,7 @@ update_camera :: (camera : *Camera) {
     move_input.z = key_state(SDL_SCANCODE_S) - key_state(SDL_SCANCODE_W);
     move_input = vec3_rotate(normalize(move_input), camera.rotation);
     
-	camera.position += move_input * move_speed * g_delta_time;
+	camera.position += move_input * move_speed * delta_time;
     
     camera.rotation_input = lerp(camera.rotation_input, mouse.delta, Camera.ROTATION_SMOOTHING);
     delta := camera.rotation_input * Camera.ROTATION_SPEED;

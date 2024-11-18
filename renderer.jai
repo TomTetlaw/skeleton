@@ -15,6 +15,10 @@ init_renderer :: () {
     tex_coord_buffer = create_buffer("tex_coord_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec2));
     normal_buffer = create_buffer("normal_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
     index_buffer = create_buffer("index_buffer", GL_ELEMENT_ARRAY_BUFFER, MAX_INDICES * size_of(u32));
+    bone_ids_buffer = create_buffer("bone_ids", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Bone_Ids));
+    bone_weights_buffer = create_buffer("bone_weights", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
+    skinning_buffer = create_buffer("skinning_buffer", GL_UNIFORM_BUFFER, MAX_BONES * size_of(Mat4));
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, skinning_buffer);
     
     glGenVertexArrays(1, *vertex_array);
     glBindVertexArray(vertex_array);
@@ -30,6 +34,14 @@ init_renderer :: () {
     glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+    glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(3, 4, GL_SHORT, size_of(Bone_Ids), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
     
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
@@ -73,7 +85,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     
     tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
     
-    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, .[], .[]);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -87,7 +99,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     add_render_command(command);
 }
 
-draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
+draw_pose :: (player: *Anim_Player, transform: Mat4) {
     colours := Vec4.[
                      .{1, 0, 0, 1},    // Red
                      .{0, 1, 0, 1},    // Green
@@ -101,9 +113,12 @@ draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
                      .{0.5, 1, 0, 1},  // Lime
                      ];
     
-    for pose.model_space_transforms {
-        parent_transform := transform * pose.parent_model_space_transforms[it_index];
-		world_space_transform := transform * it;
+    pose := *player.pose;
+    for pose.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        
+        parent_transform := transform * pose.parent_model_space_transforms[bone.id];
+		world_space_transform := transform * pose.model_space_transforms[bone.id];
         
 		start := Vec3.{
             parent_transform._14,
@@ -117,7 +132,7 @@ draw_pose :: (pose: *Anim_Pose, transform: Mat4) {
             world_space_transform._34
         };
         
-        draw_line(start, end, 0.1, colours[it_index % 10]);
+        draw_line(start, end, 0.01, colours[it_index % 10]);
     }
 }
 
@@ -127,7 +142,30 @@ draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     indices := mesh.indices;
     normals := mesh.normals;
     
-    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_coloured_mesh;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = transform;
+    command.colour = .{1, 1, 1, 1};
+    
+    add_render_command(command);
+}
+
+draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
+    positions := mesh.positions;
+    tex_coords := mesh.tex_coords;
+    indices := mesh.indices;
+    normals := mesh.normals;
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, mesh.bone_ids, mesh.weights);
+    
+    glBindBuffer(GL_UNIFORM_BUFFER, skinning_buffer);
+    skinning_transforms := player.pose.skinning_transforms;
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, skinning_transforms.count * size_of(Mat4), skinning_transforms.data);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -184,6 +222,9 @@ renderer_draw_frame :: () {
     commands.count = 0;
 }
 
+MAX_BONES :: 1000;
+MAX_WEIGHTS :: 4;
+
 #scope_file
 
 MAX_DRAW_COMMANDS :: 1000;
@@ -204,6 +245,9 @@ position_buffer: u32;
 tex_coord_buffer: u32;
 normal_buffer: u32;
 index_buffer: u32;
+bone_ids_buffer: u32;
+bone_weights_buffer: u32;
+skinning_buffer: u32;
 
 vertex_array: u32;
 
@@ -235,7 +279,7 @@ create_buffer :: (name: string, target: u32, size: int) -> u32 {
     return id;
 }
 
-write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Vec3, indices: [] u32) -> int, int {
+write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Vec3, indices: [] u32, bone_ids: [] Bone_Ids, bone_weights: [] Vec3) -> int, int {
     assert(tex_coords.count == positions.count);
     assert(normals.count == positions.count);
     
@@ -256,6 +300,28 @@ write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Ve
     glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), normals.count * size_of(Vec3),
                     normals.data);
+    
+    if (bone_ids.count > 0) {
+        assert(bone_ids.count == positions.count);
+        assert(bone_weights.count == positions.count);
+        glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Bone_Ids), bone_ids.count * size_of(Bone_Ids),
+                        bone_ids.data);
+        glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), bone_weights.count * size_of(Vec3),
+                        bone_weights.data);
+    } else {
+        empty_bone_ids := arena_push_n(*frame_arena, Bone_Ids, xx positions.count);
+        for * empty_bone_ids it.* = .{-1, -1, -1, -1};
+        empty_bone_weights := arena_push_n(*frame_arena, Vec3, xx positions.count);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Bone_Ids), empty_bone_ids.count * size_of(Bone_Ids),
+                        empty_bone_ids.data);
+        glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), empty_bone_weights.count * size_of(Vec3),
+                        empty_bone_weights.data);
+    }
     
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, written_indices * size_of(u32), indices.count * size_of(u32), indices.data);

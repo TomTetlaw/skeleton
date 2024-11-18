@@ -1,4 +1,4 @@
-r_time, g_time, r_delta_time, g_delta_time := 0.0;
+real_time, game_time, real_delta_time, delta_time: float;
 game_paused := false;
 
 main :: () {
@@ -27,16 +27,19 @@ main :: () {
     init_font_system();
     init_shader_system();
     init_mesh_system();
+    init_animation_system();
     
     frame_keys.allocator = temp;
     
-    mesh_test := load_mesh("mesh/man/test.mesh");
-    anim_test := load_animation("mesh/man/test.anim");
+    mesh_map_test := load_mesh("mesh/maps/test.mesh");
     
-    anim_player: Anim_Player;
-    anim_player.mesh = mesh_test;
-    anim_player.anim = anim_test;
-    anim_player.playing = true;
+    mesh_test := load_mesh("mesh/man/man-low-poly.mesh");
+    anim_test := load_animation("mesh/man/man-low-poly.anim");
+    
+    anim_player := create_anim_player(mesh_test, anim_test);
+    anim_play(*anim_player);
+    
+    old_time = current_time_monotonic();
     
     quit := false;
     while !quit {
@@ -48,20 +51,20 @@ main :: () {
             now := current_time_monotonic();
             delta := now - old_time;
             
-            r_time_f64 = to_float64_seconds(now);
-            r_delta_time_f64 = to_float64_seconds(delta);
+            real_time_f64 = to_float64_seconds(now);
+            real_delta_time_f64 = to_float64_seconds(delta);
             
             if game_paused {
-                g_delta_time_f64 = 0.0;
+                delta_time_f64 = 0.0;
             } else {
-                g_delta_time_f64 = r_delta_time_f64;
-                g_time_f64 += g_delta_time_f64;
+                delta_time_f64 = real_delta_time_f64;
+                game_time_f64 += delta_time_f64;
             }
             
-            r_time = xx r_time_f64;
-            g_time = xx g_time_f64;
-            r_delta_time = xx r_delta_time_f64;
-            g_delta_time = xx g_delta_time_f64;
+            real_time = xx real_time_f64;
+            game_time = xx game_time_f64;
+            real_delta_time = xx real_delta_time_f64;
+            delta_time = xx delta_time_f64;
             
             old_time = now;
         }
@@ -86,11 +89,14 @@ main :: () {
         }
         
         update_camera(*camera);
-        update_animation(*anim_player);
+        anim_update(*anim_player);
         
-        mesh_transform := mat4_translation(.{0, 0, 10});
-        draw_mesh(mesh_test, mesh_transform);
-        draw_pose(*anim_player.pose, mesh_transform);
+        mesh_transform := mat4_translation(.{0, 0, 0});
+        draw_skinned_mesh(mesh_test, *anim_player, mesh_transform);
+        //draw_pose(*anim_player, mesh_transform);
+        draw_mesh(mesh_map_test, mesh_transform);
+        
+        if key_pressed(SDL_SCANCODE_LEFT) anim_update(*anim_player);
         
         renderer_draw_frame();
         
@@ -148,4 +154,4 @@ WINDOW_WIDTH := 1366;
 WINDOW_HEIGHT := 768;
 
 old_time: Apollo_Time;
-r_time_f64, g_time_f64, r_delta_time_f64, g_delta_time_f64: float64 = 0.0;
+real_time_f64, game_time_f64, real_delta_time_f64, delta_time_f64: float64;

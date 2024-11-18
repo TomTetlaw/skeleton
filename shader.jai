@@ -7,8 +7,10 @@ Shader :: struct {
 }
 
 get_shader_location :: (shader: *Shader, name: string) -> s32 {
-    hash_index := get_hash(name) % 1024;
+    hash_index := djb2_hash(name) % UNIFORM_MAP_SIZE;
     index := shader.hash_map[hash_index];
+    if index == -1 return -1;
+    
     loc := shader.uniforms[index];
     return loc;
 }
@@ -40,8 +42,8 @@ set_shader_texture :: (shader: *Shader, name: string, value: u32, unit: u32) {
     glUniform1i(loc, xx unit);
 }
 
-create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
-    make_shader_object :: (shader: string, prefix: string, shader_type : u32) -> u32 {
+create_shader :: (name: string, type: Shader_Type, shader_text: string) -> *Shader {
+    make_shader_object :: (name: string, shader: string, prefix: string, shader_type : u32) -> u32 {
         shader_object := glCreateShader(shader_type);
         
         shaders: [2] *u8;
@@ -62,7 +64,7 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
         if !success then {
             log_data: [4096] u8;
             glGetShaderInfoLog(shader_object, log_data.count, null, log_data.data);
-            print(to_string(log_data.data));
+            fatal_error("Error compiling shader file %: %", name, to_string(log_data.data));
             return 0;
         }
         
@@ -83,8 +85,8 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
 #define INOUT in
         HERE;
     
-    shader_v := make_shader_object(shader_text, PREFIX_V, GL_VERTEX_SHADER);
-    shader_f := make_shader_object(shader_text, PREFIX_F, GL_FRAGMENT_SHADER);
+    shader_v := make_shader_object(tprint("%_vertex_shader", name), shader_text, PREFIX_V, GL_VERTEX_SHADER);
+    shader_f := make_shader_object(tprint("%_fragment_shader", name), shader_text, PREFIX_F, GL_FRAGMENT_SHADER);
     shader_p := glCreateProgram();
     
     glAttachShader(shader_p, shader_v);
@@ -97,7 +99,7 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
     if !success {
         log_data: [4096] u8;
         glGetProgramInfoLog(shader_p, log_data.count, null, log_data.data);
-        print(to_string(log_data.data));
+        fatal_error("Error linking program object %: %", name, to_string(log_data.data));
         return *null_shader;
     }
     
@@ -110,14 +112,16 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
     if !success {
         log_data: [4096] u8;
         glGetProgramInfoLog(shader_p, log_data.count, null, log_data.data);
-        print(to_string(log_data.data));
+        fatal_error("Error validating program object %: %", name, to_string(log_data.data));
         return *null_shader;
     }
     
     shader := arena_push(*shaders);
     shader.id = shader_p;
-    shader.hash_map = arena_push_n(*shader_arena, int, 1024);
+    shader.hash_map = arena_push_n(*shader_arena, int, UNIFORM_MAP_SIZE);
     shader.type = type;
+    
+    for 0..UNIFORM_MAP_SIZE-1 shader.hash_map[it] = -1;
     
     active_uniform_count: s32;
     glGetProgramiv(shader_p, GL_ACTIVE_UNIFORMS, *active_uniform_count);
@@ -131,8 +135,12 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
         
         uniform_name := cast(string) buffer;
         uniform_name.count = c_style_strlen(buffer.data);
-        hash_index := get_hash(uniform_name) % 1024;
+        
+        hash_index := djb2_hash(uniform_name) % UNIFORM_MAP_SIZE;
+        assert(shader.hash_map[hash_index] == -1);
+        
         shader.hash_map[hash_index] = shader.uniforms.count;
+        
         array_add(*shader.uniforms, loc);
     }
     
@@ -141,12 +149,14 @@ create_shader :: (type: Shader_Type, shader_text: string) -> *Shader {
 
 #scope_file
 
+#import "Hash";
+#import "Print_Vars";
+
+UNIFORM_MAP_SIZE :: 2048;
+
 shader_arena: Arena;
 shaders: Typed_Arena(Shader);
 null_shader: Shader;
-
-#import "Hash";
-#import "Print_Vars";
 
 #scope_export
 
@@ -160,43 +170,93 @@ init_shader_system :: () {
     shaders = create_typed_arena(Shader);
     shader_arena = create_arena();
     
-    shader_coloured_mesh = create_shader(.COLOURED_MESH, SHADER_COLOURED_MESH_TEXT);
+    shader_coloured_mesh = create_shader("shader_coloured_mesh", .COLOURED_MESH, SHADER_COLOURED_MESH_TEXT);
 }
 
 prepare_coloured_mesh_shader :: (shader: *Shader) {
+    uniform_index := glGetUniformBlockIndex (shader.id, "Skinning_Transforms");
+	glUniformBlockBinding (shader.id, uniform_index, 0);
 }
 
-SHADER_COLOURED_MESH_TEXT :: #string HERE
-INOUT vec2 frag_tex_coord;
-INOUT vec4 frag_colour;
-
+SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
+                                         INOUT vec2 frag_tex_coord;
+                                         INOUT vec4 frag_colour;
+                                         INOUT vec3 frag_normal;
+                                         
 #if VERTEX_SHADER
-
-layout(location = 0) in vec3 vertex_position;
-layout(location = 1) in vec2 vertex_tex_coord;
-layout(location = 2) in vec3 vertex_normal;
-
-uniform mat4 transform_matrix;
-uniform mat4 view_matrix;
-uniform mat4 projection_matrix;
-uniform vec4 base_colour;
-
-void main() {
-    frag_tex_coord = vertex_tex_coord;
-    frag_colour = base_colour;
-    
-    gl_Position = projection_matrix * view_matrix * transform_matrix * vec4(vertex_position, 1);
-}
-
+                                         
+                                         layout(location = 0) in vec3 vertex_position;
+                                         layout(location = 1) in vec2 vertex_tex_coord;
+                                         layout(location = 2) in vec3 vertex_normal;
+                                         layout(location = 3) in ivec4 bone_ids;
+                                         layout(location = 4) in vec3 bone_weights;
+                                         
+                                         const int MAX_BONES  = %1;
+                                         const int MAX_WEIGHTS = %2;
+                                         
+                                         layout (std140) uniform Skinning_Transforms
+                                         {
+                                             mat4 skinning_transforms[MAX_BONES];
+                                         };
+                                         
+                                         uniform mat4 transform_matrix;
+                                         uniform mat4 view_matrix;
+                                         uniform mat4 projection_matrix;
+                                         uniform vec4 base_colour;
+                                         
+                                         vec4 snap_ps1(vec4 position) {
+                                             const vec2 res = vec2(450, 450);
+                                             
+                                             vec3 snapped = position.xyz / position.w;
+                                             snapped.x = floor(res.x * snapped.x) / res.x;
+                                             snapped.y = floor(res.y * snapped.y) / res.y;
+                                             snapped.xyz *= position.w;
+                                             return vec4(snapped, position.w);
+                                         }
+                                         
+                                         void main() {
+                                             frag_tex_coord = vertex_tex_coord;
+                                             frag_colour = base_colour;
+                                             
+                                             vec3 model_position = vec3(0);
+                                             vec3 model_normal = vec3(0);
+                                             
+                                             if (bone_ids.x == -1) {
+                                                 model_position = vertex_position;
+                                                 model_normal = vertex_normal;
+                                             }
+                                             
+                                             for (int i = 0; i < MAX_WEIGHTS && bone_ids[i] != -1; i += 1) {
+                                                 int bone_id = bone_ids[i];
+                                                 float weight = 0;
+                                                 if (i == MAX_WEIGHTS - 1) {
+                                                     weight = 1.0 - (bone_weights.x+bone_weights.y+bone_weights.z);
+                                                 } else {
+                                                     weight = bone_weights[i];
+                                                 }
+                                                 mat4 skinning_matrix = skinning_transforms[bone_id];
+                                                 vec3 pose_position = (skinning_matrix * vec4(vertex_position, 1)).xyz;
+                                                 model_position += pose_position * weight;
+                                                 vec3 pose_normal = (skinning_matrix * vec4(vertex_normal, 1)).xyz;
+                                                 model_normal += pose_normal * weight;
+                                             }
+                                             
+                                             vec4 position = projection_matrix * view_matrix * transform_matrix * vec4(model_position, 1);
+                                             
+                                             gl_Position = snap_ps1(position);
+                                             
+                                             frag_normal = model_normal;
+                                         }
+                                         
 #endif
-
+                                         
 #if FRAGMENT_SHADER
-
-out vec4 output_colour;
-
-void main() {
-    output_colour = frag_colour;
-}
-
+                                         
+                                         out vec4 output_colour;
+                                         
+                                         void main() {
+                                             output_colour = vec4(frag_normal, 1) * frag_colour;
+                                         }
+                                         
 #endif
-HERE
+                                         HERE, MAX_BONES, MAX_WEIGHTS);
