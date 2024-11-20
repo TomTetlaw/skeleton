@@ -20,12 +20,15 @@ Mesh :: struct {
     path: string;
     positions: [] Vec3;
     tex_coords: [] Vec2;
-    normals: [] Vec3;
+    tangent_normals: [] Vec4;
     indices: [] u32;
     
     weights: [] Vec3;
     bone_ids: [] Bone_Ids;
     skeleton: *Skeleton;
+    
+    min_bounds: Vec3;
+    max_bounds: Vec3;
 }
 
 Animation :: struct {
@@ -63,10 +66,23 @@ load_mesh :: (path: string) -> *Mesh {
     
     positions := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
     tex_coords := file_read_array(*file, *mesh_arena, Vec2, header.num_vertices);
-    normals := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
+    tangents_normals := file_read_array(*file, *mesh_arena, Vec4, header.num_vertices);
     weights := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
     bone_ids := file_read_array(*file, *mesh_arena, Bone_Ids, header.num_vertices);
     indices := file_read_array(*file, *mesh_arena, u32, header.num_indices);
+    
+    min_bounds := Vec3.{FLOAT32_MAX, FLOAT32_MAX, FLOAT32_MAX};
+    max_bounds := Vec3.{FLOAT32_MIN, FLOAT32_MIN, FLOAT32_MIN};
+    
+    for positions {
+        min_bounds.x = min(min_bounds.x, it.x);
+        min_bounds.y = min(min_bounds.y, it.y);
+        min_bounds.z = min(min_bounds.z, it.z);
+        
+        max_bounds.x = max(max_bounds.x, it.x);
+        max_bounds.y = max(max_bounds.y, it.y);
+        max_bounds.z = max(max_bounds.z, it.z);
+    }
     
     serialized_bones := file_read_bones(*file, *mesh_arena, header.num_bones);
     bones := arena_push_n(*mesh_arena, Bone, xx header.num_bones);
@@ -111,11 +127,13 @@ load_mesh :: (path: string) -> *Mesh {
     mesh.path = path;
     mesh.positions = positions;
     mesh.tex_coords = tex_coords;
-    mesh.normals = normals;
+    mesh.tangents_normals = tangents_normals;
     mesh.indices = indices;
     mesh.weights = weights;
     mesh.bone_ids = bone_ids;
     mesh.skeleton = skeleton;
+    mesh.min_bounds = min_bounds;
+    mesh.max_bounds = max_bounds;
     
     return mesh;
 }

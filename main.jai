@@ -22,8 +22,8 @@ main :: () {
     key_states = SDL_GetKeyboardState(null);
     
     init_memory_system();
-    init_renderer();
     init_texture_system();
+    init_renderer();
     init_font_system();
     init_shader_system();
     init_mesh_system();
@@ -33,8 +33,8 @@ main :: () {
     
     mesh_map_test := load_mesh("mesh/maps/test.mesh");
     
-    mesh_test := load_mesh("mesh/man/man-low-poly.mesh");
-    anim_test := load_animation("mesh/man/man-low-poly.anim");
+    mesh_test := load_mesh("mesh/man/man.mesh");
+    anim_test := load_animation("mesh/man/man.anim");
     
     anim_player := create_anim_player(mesh_test, anim_test);
     anim_play(*anim_player);
@@ -92,9 +92,8 @@ main :: () {
         anim_update(*anim_player);
         
         mesh_transform := mat4_translation(.{0, 0, 0});
-        draw_skinned_mesh(mesh_test, *anim_player, mesh_transform);
-        //draw_pose(*anim_player, mesh_transform);
         draw_mesh(mesh_map_test, mesh_transform);
+        draw_skinned_mesh(mesh_test, *anim_player, mesh_transform);
         
         if key_pressed(SDL_SCANCODE_LEFT) anim_update(*anim_player);
         

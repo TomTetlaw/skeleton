@@ -13,7 +13,7 @@ init_renderer :: () {
     
     position_buffer = create_buffer("position_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
     tex_coord_buffer = create_buffer("tex_coord_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec2));
-    normal_buffer = create_buffer("normal_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
+    tangent_normal_buffer = create_buffer("normal_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec4));
     index_buffer = create_buffer("index_buffer", GL_ELEMENT_ARRAY_BUFFER, MAX_INDICES * size_of(u32));
     bone_ids_buffer = create_buffer("bone_ids", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Bone_Ids));
     bone_weights_buffer = create_buffer("bone_weights", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
@@ -31,9 +31,9 @@ init_renderer :: () {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, size_of(Vec2), xx 0);
     
-    glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);
+    glBindBuffer(GL_ARRAY_BUFFER, tangent_normal_buffer);
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, size_of(Vec4), xx 0);
     
     glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
     glEnableVertexAttribArray(3);
@@ -47,6 +47,9 @@ init_renderer :: () {
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
+    
+    pixels := u8.[200, 200, 200, 255];
+    default_grey_texture = create_texture("default_grey", 1, 1, pixels.data);
 }
 
 draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
@@ -151,6 +154,7 @@ draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     command.index_count = indices.count;
     command.transform = transform;
     command.colour = .{1, 1, 1, 1};
+    command.mesh = mesh;
     
     add_render_command(command);
 }
@@ -159,13 +163,15 @@ draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
     positions := mesh.positions;
     tex_coords := mesh.tex_coords;
     indices := mesh.indices;
-    normals := mesh.normals;
+    normals := mesh.tangents_normals;
     
     first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, mesh.bone_ids, mesh.weights);
     
     glBindBuffer(GL_UNIFORM_BUFFER, skinning_buffer);
     skinning_transforms := player.pose.skinning_transforms;
     glBufferSubData(GL_UNIFORM_BUFFER, 0, skinning_transforms.count * size_of(Mat4), skinning_transforms.data);
+    
+    test_texture := load_texture("mesh/man/textures/man-test-texture.png");
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -174,6 +180,8 @@ draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
     command.index_count = indices.count;
     command.transform = transform;
     command.colour = .{1, 1, 1, 1};
+    command.textures[0] = test_texture.id;
+    command.mesh = mesh;
     
     add_render_command(command);
 }
@@ -191,15 +199,21 @@ renderer_draw_frame :: () {
         set_shader_mat4(it.shader, "view_matrix", camera.view);
         set_shader_mat4(it.shader, "projection_matrix", projection);
         set_shader_vec4(it.shader, "base_colour", it.colour);
+        set_shader_vec4(it.shader, "screen_params", .{1366, 768, 0, 0}); //@todo
+        set_shader_vec3(it.shader, "camera_position", camera.position);
         
         if it.shader.type == {
             case .COLOURED_MESH;
-            prepare_coloured_mesh_shader(it.shader);
+            prepare_coloured_mesh_shader(it.mesh, it.shader);
         }
         
         for it.textures {
             glActiveTexture(GL_TEXTURE0 + cast (u32) it_index);
-            glBindTexture(GL_TEXTURE_2D, it);
+            if it == 0 {
+                glBindTexture(GL_TEXTURE_2D, default_grey_texture.id);
+            } else {
+                glBindTexture(GL_TEXTURE_2D, it);
+            }
         }
         
         if it.flags & .NO_DEPTH_TEST glDisable(GL_DEPTH_TEST);
@@ -241,9 +255,11 @@ add_render_command :: (command: Draw_Command)  #no_abc {
     commands.count += 1;
 }
 
+default_grey_texture: *Texture;
+
 position_buffer: u32;
 tex_coord_buffer: u32;
-normal_buffer: u32;
+tangent_normal_buffer: u32;
 index_buffer: u32;
 bone_ids_buffer: u32;
 bone_weights_buffer: u32;
@@ -268,6 +284,9 @@ Draw_Command :: struct {
     transform: Mat4;
     colour: Vec4;
     flags: Draw_Command_Flags;
+    
+    // extra info for certain draw calls
+    mesh: *Mesh;
 }
 
 create_buffer :: (name: string, target: u32, size: int) -> u32 {
@@ -279,7 +298,7 @@ create_buffer :: (name: string, target: u32, size: int) -> u32 {
     return id;
 }
 
-write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Vec3, indices: [] u32, bone_ids: [] Bone_Ids, bone_weights: [] Vec3) -> int, int {
+write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, tangents_normals: [] Vec4, indices: [] u32, bone_ids: [] Bone_Ids, bone_weights: [] Vec3) -> int, int {
     assert(tex_coords.count == positions.count);
     assert(normals.count == positions.count);
     
@@ -297,13 +316,14 @@ write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, normals: [] Ve
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), positions.count * size_of(Vec3), positions.data);
     glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec2), tex_coords.count * size_of(Vec2), tex_coords.data);
-    glBindBuffer(GL_ARRAY_BUFFER, normal_buffer);
-    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), normals.count * size_of(Vec3),
+    glBindBuffer(GL_ARRAY_BUFFER, tangent_normal_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec4), normals.count * size_of(Vec4),
                     normals.data);
     
     if (bone_ids.count > 0) {
         assert(bone_ids.count == positions.count);
         assert(bone_weights.count == positions.count);
+        
         glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
         glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Bone_Ids), bone_ids.count * size_of(Bone_Ids),
                         bone_ids.data);

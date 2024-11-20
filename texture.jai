@@ -25,8 +25,8 @@ load_texture :: (path: string) -> *Texture {
     glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     
     stb_image_free(pixels);
     
@@ -36,24 +36,22 @@ load_texture :: (path: string) -> *Texture {
     texture.width = xx width;
     texture.height = xx height;
     
-    print("loaded texture %\n", path);
-    
     return texture;
 }
 
 Texture_Format :: enum {
-    Rgba;
-    Rgb;
+    RGBA;
+    RGB;
     R;
 }
 
-create_texture :: (name: string, width: int, height: int, pixels: *u8, format: Texture_Format = .Rgba) -> *Texture {
+create_texture :: (name: string, width: int, height: int, pixels: *u8, format: Texture_Format = .RGBA) -> *Texture {
     pixel_format, internal_format: u32;
     if format == {
-        case .Rgba;
+        case .RGBA;
         pixel_format = GL_RGBA;
         internal_format = GL_RGBA8;
-        case .Rgb;
+        case .RGB;
         pixel_format = GL_RGB;
         internal_format = GL_RGB8;
         case .R;
