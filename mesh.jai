@@ -20,9 +20,9 @@ Mesh :: struct {
     path: string;
     positions: [] Vec3;
     tex_coords: [] Vec2;
-    tangent_normals: [] Vec4;
+    tangents_normals: [] Vec4;
     indices: [] u32;
-    
+
     weights: [] Vec3;
     bone_ids: [] Bone_Ids;
     skeleton: *Skeleton;
@@ -185,6 +185,7 @@ load_animation :: (path: string) -> *Animation {
 
 #import "Basic";
 #import "Sort";
+#import "File";
 
 BONE_NAME_MAP_SIZE :: 2048;
 

@@ -5,9 +5,11 @@ main :: () {
     SDL_Init(SDL_INIT_EVERYTHING);
     window := SDL_CreateWindow("Skeleton", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, xx WINDOW_WIDTH, xx WINDOW_HEIGHT, SDL_WINDOW_OPENGL);
     
+    #if OS == .WINDOWS {
     wm_info: SDL_SysWMinfo;
     SDL_GetWindowWMInfo(window, *wm_info);
     hwnd := wm_info.info.win.window;
+    }
     
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
@@ -24,7 +26,7 @@ main :: () {
     init_memory_system();
     init_texture_system();
     init_renderer();
-    init_font_system();
+    // init_font_system();
     init_shader_system();
     init_mesh_system();
     init_animation_system();
@@ -71,21 +73,16 @@ main :: () {
         
         // update mouse
         {
-            p: POINT;
-            GetCursorPos(*p);
-            ScreenToClient(hwnd, *p);
+            x, y: s32;
+            SDL_GetMouseState(*x, *y);
             
-            pos := Vec2.{xx p.x, xx p.y};
+            pos := Vec2.{xx x, xx y};
             
             mouse.delta.x = mouse.position.x - pos.x;
             mouse.delta.y = mouse.position.y - pos.y;
             
             mouse.position.x = pos.x;
             mouse.position.y = pos.y;
-            
-            /*user32 :: #system_library "User32";
-            SetCursorPos :: (x: s32, y: s32) -> s32 #foreign user32;
-            SetCursorPos(xx (WINDOW_WIDTH/2), xx (WINDOW_HEIGHT/2));*/
         }
         
         update_camera(*camera);

@@ -69,7 +69,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     positions[6] = end - right - forward;
     positions[7] = end + right - forward;
     
-    normals := Vec3.[.{},.{},.{},.{},.{},.{},.{},.{}];
+    tangents_normals := Vec4.[.{},.{},.{},.{},.{},.{},.{},.{}];
     
     indices := u32.[
                     // Front face
@@ -88,7 +88,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     
     tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
     
-    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, .[], .[]);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -143,9 +143,9 @@ draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     positions := mesh.positions;
     tex_coords := mesh.tex_coords;
     indices := mesh.indices;
-    normals := mesh.normals;
+    tangents_normals := mesh.tangents_normals;
     
-    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, .[], .[]);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -163,9 +163,9 @@ draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
     positions := mesh.positions;
     tex_coords := mesh.tex_coords;
     indices := mesh.indices;
-    normals := mesh.tangents_normals;
+    tangents_normals := mesh.tangents_normals;
     
-    first_vertex, first_index := write_render_buffers(positions, tex_coords, normals, indices, mesh.bone_ids, mesh.weights);
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, mesh.bone_ids, mesh.weights);
     
     glBindBuffer(GL_UNIFORM_BUFFER, skinning_buffer);
     skinning_transforms := player.pose.skinning_transforms;
@@ -300,7 +300,7 @@ create_buffer :: (name: string, target: u32, size: int) -> u32 {
 
 write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, tangents_normals: [] Vec4, indices: [] u32, bone_ids: [] Bone_Ids, bone_weights: [] Vec3) -> int, int {
     assert(tex_coords.count == positions.count);
-    assert(normals.count == positions.count);
+    assert(tangents_normals.count == positions.count);
     
     if written_vertices + positions.count >= MAX_VERTICES {
         fatal_error("Out of vertices: written %, wanted %, max is %", written_vertices, positions.count, MAX_VERTICES);
@@ -317,8 +317,8 @@ write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, tangents_norma
     glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
     glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec2), tex_coords.count * size_of(Vec2), tex_coords.data);
     glBindBuffer(GL_ARRAY_BUFFER, tangent_normal_buffer);
-    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec4), normals.count * size_of(Vec4),
-                    normals.data);
+    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec4), tangents_normals.count * size_of(Vec4),
+                    tangents_normals.data);
     
     if (bone_ids.count > 0) {
         assert(bone_ids.count == positions.count);

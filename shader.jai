@@ -290,10 +290,7 @@ SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
                                              vec3 position = vertex_position;
                                              vec3 normal = unpack_normal(vertex_tangent_normal.xy);
                                              vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
-                                             vec3 bitangent = cross(normal, tangent) * sign(dot(cross(normal, tangent), bitangent)));
-                                             mat3 TBN = mat3(tangent, bitangent, normal);
-                                             vec3 bump_normal = texture2D(bump_map, vertex_tex_coord) * 2 + 1;
-                                             bump_normal = TBN * bump_normal;
+                                             //vec3 bitangent = cross(normal, tangent) * sign(dot(cross(normal, tangent), bitangent));
                                              
                                              vec3 model_position = vec3(0);
                                              vec3 model_normal = vec3(0);
@@ -326,9 +323,9 @@ SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
                                              }
                                              
                                              mat4 MVP = projection_matrix * view_matrix * transform_matrix;
-                                             vec4 position = MVP * vec4(model_position, 1);
+                                             vec4 ndc_position = MVP * vec4(model_position, 1);
                                              
-                                             gl_Position = position;// snap_ps1(MVP, position, mesh_min_bounds, mesh_max_bounds, screen_params.xy);
+                                             gl_Position = snap_ps1(MVP, ndc_position, mesh_min_bounds, mesh_max_bounds, screen_params.xy);
                                              
                                              vec4 world_position = vec4(model_position, 1) * transform_matrix;
                                              frag_position = world_position.xyz;
@@ -350,11 +347,11 @@ SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
                                              vec3 light_colour = vec3(1.0, 1.0, 0.9);
                                              vec3 params = vec3(0.1, 0.0, 0.0);
                                              vec2 tex_coord = vec2(frag_tex_coord.x, frag_tex_coord.y);
-                                             vec3 colour = texture(base_texture, tex_coord).xyz * frag_colour.xyz;
+                                             vec3 colour = /*texture(base_texture, tex_coord).xyz * */frag_colour.xyz;
                                              
                                              //colour = ambient_lighting(light_dir, light_colour, camera_position, frag_position, colour, frag_normal, params);
                                              
-                                             colour *= max(dot(normalize(frag_normal), normalize(light_dir)), 0);
+                                             //colour *= max(dot(normalize(frag_normal), normalize(light_dir)), 0);
                                              
                                              output_colour = vec4(colour, 1);
                                          }

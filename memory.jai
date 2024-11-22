@@ -5,10 +5,13 @@ Arena :: struct {
 }
 
 create_arena :: (initial_cap := COMMIT_EXPAND_AMOUNT) -> Arena {
-    memory := VirtualAlloc(null, MAX_COMMITTED_SIZE, MEM_RESERVE, PAGE_READWRITE);
-    if !memory fatal_error(tprint("Failed to create arena: %", GetLastError()));
+    memory := platform_reserve(MAX_COMMITTED_SIZE);
+    if !memory {
+        value, text := get_error_value_and_string();
+        fatal_error(tprint("Failed to create arena: error_code=%, error_string=%", value, text));
+    }
     
-    VirtualAlloc(memory, initial_cap, MEM_COMMIT, PAGE_READWRITE);
+    platform_commit(memory, 0, initial_cap);
     
     arena: Arena;
     arena.memory = memory;
@@ -16,7 +19,7 @@ create_arena :: (initial_cap := COMMIT_EXPAND_AMOUNT) -> Arena {
     return arena;
 }
 
-arena_alloc :: (arena: *Arena, size: u64, zero := true) -> *void {
+arena_alloc :: (arena: *Arena, size: u64, $zero := true) -> *void {
     if arena.used + size >= arena.cap {
         if arena.cap + COMMIT_EXPAND_AMOUNT >= MAX_COMMITTED_SIZE fatal_error("Arena exceded max committed size");
         
@@ -24,12 +27,12 @@ arena_alloc :: (arena: *Arena, size: u64, zero := true) -> *void {
         commit_size := size;
         if remainder != 0 commit_size += COMMIT_EXPAND_AMOUNT - remainder;
         
-        VirtualAlloc(arena.memory + arena.cap, commit_size, MEM_COMMIT, PAGE_READWRITE);
+        platform_commit(arena.memory, arena.cap, commit_size);
         arena.cap += commit_size;
     }
     
     memory := arena.memory + arena.used;
-    if zero memset(memory, 0, xx size);
+    #if zero memset(memory, 0, xx size);
     arena.used += size;
     return memory;
 }
@@ -96,7 +99,39 @@ frame_arena: Arena;
 
 #scope_file
 
+#import "System";
+
+#if OS == .WINDOWS {
+
 #import "Windows";
+
+PAGE_SIZE :: 4096;
+
+platform_reserve :: (cap: u64) -> *u8 {
+    memory := VirtualAlloc(null, cap, MEM_RESERVE, PAGE_READWRITE);
+    return memory;
+}
+
+platform_commit :: (memory: *u8, base: u64, size: u64) {
+    VirtualAlloc(memory + base, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+} else #if OS == .LINUX {
+
+#import "POSIX";
+
+PAGE_SIZE :: 4096;
+
+platform_reserve :: (cap: u64) -> *u8 {
+    memory := mmap(null, cap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    if memory == (cast(*void)-1) return null; // linux uses a different return value for failed
+    return memory;
+}
+
+platform_commit :: (memory: *u8, base: u64, size: u64) {
+}
+
+}
 
 MAX_COMMITTED_SIZE :u64: 1024*1024*1024*4;
 COMMIT_EXPAND_AMOUNT :u64: 1024*1024;
