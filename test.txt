@@ -1,0 +1,2009 @@
+START OF .//animation.jai
+
+Anim_Player :: struct {
+    mesh: *Mesh;
+    anim: *Animation;
+    
+    playing: bool;
+    anim_time: float;
+    pose: Anim_Pose;
+    
+    fps := 30;
+}
+
+Anim_Pose :: struct {
+    bone_names: [] string;
+    model_space_transforms: [] Mat4;
+    parent_model_space_transforms: [] Mat4;
+    skinning_transforms: [] Mat4;
+}
+
+init_animation_system :: () {
+    anim_arena = create_arena();
+}
+
+create_anim_player :: (mesh: *Mesh, anim: *Animation) -> Anim_Player {
+    player: Anim_Player;
+    player.mesh = mesh;
+    player.anim = anim;
+    player.pose.bone_names = anim.bone_names;
+    
+    player.pose.parent_model_space_transforms = arena_push_n(*anim_arena, Mat4, xx anim.bone_count);
+    player.pose.model_space_transforms = arena_push_n(*anim_arena, Mat4, xx anim.bone_count);
+    player.pose.skinning_transforms = arena_push_n(*anim_arena, Mat4, xx anim.bone_count);
+    
+    return player;
+}
+
+anim_play :: (player: *Anim_Player) {
+    player.anim_time = 0;
+    player.playing = true;
+}
+
+anim_stop :: (player: *Anim_Player) {
+    player.playing = false;
+}
+
+anim_update :: (player: *Anim_Player) {
+    if !player.playing return;
+    
+    pose := player.pose;
+    mesh := player.mesh;
+    anim := player.anim;
+    
+    player.anim_time += delta_time * player.fps;
+    player.anim_time = fmod_cycling(player.anim_time, xx anim.sample_count);
+    frame_index := cast(int) player.anim_time;
+    lerp_t := player.anim_time - frame_index;
+    
+    for anim.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        player.pose.model_space_transforms[bone.id] = bone.local_bind_transform;
+    }
+    
+    arena_push_mark_defer(*frame_arena);
+    
+    positions := arena_push_n(*frame_arena, Vec3, xx anim.bone_names.count);
+    rotations := arena_push_n(*frame_arena, Quaternion, xx anim.bone_names.count);
+    scales := arena_push_n(*frame_arena, Vec3, xx anim.bone_names.count);
+    
+    for anim.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        
+        base_index := bone.id * anim.sample_count;
+        i0 := base_index + frame_index;
+        i1 := base_index + ((frame_index + 1) % anim.sample_count);
+        
+        /*
+        if lerp_t < 0.5 {
+            positions[bone.id] = anim.positions[i0];
+            rotations[bone.id] = anim.rotations[i0];
+            scales[bone.id] = anim.scales[i0];
+        } else {
+            positions[bone.id] = anim.positions[i1];
+            rotations[bone.id] = anim.rotations[i1];
+            scales[bone.id] = anim.scales[i1];
+        }
+*/
+        
+        positions[bone.id] = lerp(anim.positions[i0], anim.positions[i1], lerp_t);
+        rotations[bone.id] = nlerp_shortest(anim.rotations[i0], anim.rotations[i1], lerp_t);
+        scales[bone.id] = lerp(anim.scales[i0], anim.scales[i1], lerp_t);
+    }
+    
+    for anim.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        
+        local_transform := mat4_translation(positions[bone.id]) *
+            mat4_rotation(rotations[bone.id]) * mat4_scale(scales[bone.id]);
+        
+        if bone.parent {
+            pose.model_space_transforms[bone.id] = pose.model_space_transforms[bone.parent.id] * local_transform;
+            pose.parent_model_space_transforms[bone.id] = pose.model_space_transforms[bone.parent.id];
+        }
+        else {
+            pose.model_space_transforms[bone.id] = local_transform;
+            pose.parent_model_space_transforms[bone.id] = mat4_identity();
+        }
+    }
+    
+    for anim.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        pose.skinning_transforms[bone.id] = pose.model_space_transforms[bone.id] * bone.inverse_bind_transform;
+        pose.skinning_transforms[bone.id] = mat4_transpose(pose.skinning_transforms[bone.id]);
+    }
+}
+
+#scope_file
+
+anim_arena: Arena;
+
+#import "Basic";END OF .//animation.jai
+
+START OF .//camera.jai
+
+Camera :: struct {
+	FLY_SPEED :: 1.0;
+    ROTATION_SPEED :: 0.3;
+    ROTATION_SMOOTHING :: 0.3;
+    
+    yaw, pitch: float;
+    rotation_input: Vec2;
+    position: Vec3;
+    
+    rotation: Quaternion;
+    neg_rotation: Mat4;
+    transform: Mat4;
+    view: Mat4;
+};
+
+update_camera :: (camera : *Camera) {
+	move_input: Vec3;
+    
+    move_speed := Camera.FLY_SPEED;
+    if key_state(SDL_SCANCODE_LSHIFT) move_speed *= 10;
+    
+    move_input.x = key_state(SDL_SCANCODE_D) - key_state(SDL_SCANCODE_A);
+    move_input.y = key_state(SDL_SCANCODE_E) - key_state(SDL_SCANCODE_Q);
+    move_input.z = key_state(SDL_SCANCODE_S) - key_state(SDL_SCANCODE_W);
+    move_input = vec3_rotate(normalize(move_input), camera.rotation);
+    
+	camera.position += move_input * move_speed * delta_time;
+    
+    camera.rotation_input = lerp(camera.rotation_input, mouse.delta, Camera.ROTATION_SMOOTHING);
+    delta := camera.rotation_input * Camera.ROTATION_SPEED;
+    camera.yaw += delta.x * deg2rad;
+    camera.pitch += delta.y * deg2rad;
+    camera.pitch = clamp(camera.pitch, -80.0 * deg2rad, 80.0 * deg2rad);
+    
+    yaw := quat_axis_angle(.{0, 1, 0}, camera.yaw);
+    pitch := quat_axis_angle(.{1, 0, 0}, camera.pitch);
+    camera.rotation = yaw * pitch;
+    
+    camera.transform = mat4_translation(camera.position) * mat4_rotation(camera.rotation);
+    
+    camera.view = mat4_inverse(camera.transform);
+}
+
+#scope_file
+
+#import "Basic";END OF .//camera.jai
+
+START OF .//main.jai
+real_time, game_time, real_delta_time, delta_time: float;
+game_paused := false;
+
+main :: () {
+    SDL_Init(SDL_INIT_EVERYTHING);
+    window := SDL_CreateWindow("Skeleton", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, xx WINDOW_WIDTH, xx WINDOW_HEIGHT, SDL_WINDOW_OPENGL);
+    
+#if OS == .WINDOWS {
+        wm_info: SDL_SysWMinfo;
+        SDL_GetWindowWMInfo(window, *wm_info);
+        hwnd := wm_info.info.win.window;
+    }
+    
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, xx SDL_GL_CONTEXT_DEBUG_FLAG);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, xx SDL_GL_CONTEXT_PROFILE_CORE);
+    gl_context := SDL_GL_CreateContext(window);
+    
+    key_states = SDL_GetKeyboardState(null);
+    
+    init_memory_system();
+    init_texture_system();
+    init_renderer();
+    // init_font_system();
+    init_shader_system();
+    init_mesh_system();
+    init_animation_system();
+    
+    frame_keys.allocator = temp;
+    
+    mesh_map_test := load_mesh("mesh/maps/test.mesh");
+    
+    mesh_test := load_mesh("mesh/man/man.mesh");
+    anim_test := load_animation("mesh/man/man.anim");
+    
+    anim_player := create_anim_player(mesh_test, anim_test);
+    anim_play(*anim_player);
+    
+    old_time = current_time_monotonic();
+    
+    quit := false;
+    while !quit {
+        quit = process_window_events();
+        if quit break;
+        
+        // update time
+        {
+            now := current_time_monotonic();
+            delta := now - old_time;
+            
+            real_time_f64 = to_float64_seconds(now);
+            real_delta_time_f64 = to_float64_seconds(delta);
+            
+            if game_paused {
+                delta_time_f64 = 0.0;
+            } else {
+                delta_time_f64 = real_delta_time_f64;
+                game_time_f64 += delta_time_f64;
+            }
+            
+            real_time = xx real_time_f64;
+            game_time = xx game_time_f64;
+            real_delta_time = xx real_delta_time_f64;
+            delta_time = xx delta_time_f64;
+            
+            old_time = now;
+        }
+        
+        // update mouse
+        {
+            x, y: s32;
+            SDL_GetMouseState(*x, *y);
+            
+            pos := Vec2.{xx x, xx y};
+            
+            mouse.delta.x = mouse.position.x - pos.x;
+            mouse.delta.y = mouse.position.y - pos.y;
+            
+            mouse.position.x = pos.x;
+            mouse.position.y = pos.y;
+        }
+        
+        update_camera(*camera);
+        anim_update(*anim_player);
+        
+        draw_mesh(mesh_map_test, mat4_identity());
+        draw_skinned_mesh(mesh_test, *anim_player, mat4_translation(.{0, 0, -10}));
+        
+        if key_pressed(SDL_SCANCODE_LEFT) anim_update(*anim_player);
+        
+        renderer_draw_frame();
+        
+        SDL_GL_SwapWindow(window);
+        
+        frame_keys.count = 0;
+        
+        arena_reset(*frame_arena);
+    }
+}
+
+process_window_events :: () -> bool {
+    event: SDL_Event;
+    while SDL_PollEvent(*event) {
+        if event.type == SDL_QUIT return true;
+        
+        if event.type == SDL_KEYDOWN {
+            if event.key.state {
+                if event.key.keysym.scancode == SDL_SCANCODE_ESCAPE return true;
+                
+                array_add(*frame_keys, event.key.keysym.scancode);
+            }
+        }
+    }
+    
+    return false;
+}
+
+Mouse :: struct {
+    delta: Vec2;
+    position: Vec2;
+}
+
+frame_keys: [..] SDL_Scancode;
+mouse: Mouse;
+
+key_pressed :: (code: SDL_Scancode) -> bool {
+    for frame_keys if it == code return true;
+    return false;
+}
+
+key_state :: (code: SDL_Scancode) -> float {
+    return ifx key_states[code] then 1.0 else 0.0;
+}
+
+#scope_file
+
+#import "Basic";
+#import "SDL";
+#import "GL";
+
+key_states: *u8;
+
+WINDOW_WIDTH := 1366;
+WINDOW_HEIGHT := 768;
+
+old_time: Apollo_Time;
+real_time_f64, game_time_f64, real_delta_time_f64, delta_time_f64: float64;END OF .//main.jai
+
+START OF .//math.jai
+
+deg2rad :: PI / 180.0;
+rad2deg :: 180.0 / PI;
+
+Vec2 :: Vector2;
+Vec3 :: Vector3;
+Vec4 :: Vector4;
+Mat4 :: Matrix4;
+
+vec3_rotate :: (v: Vec3, q: Quaternion) -> Vec3 {
+    rotate(*v, q);
+    return v;
+}
+
+mat4_identity :: () -> Mat4 {
+    m: Mat4 = ---;
+    identity(*m);
+    return m;
+}
+
+mat4_look_at :: (pos: Vec3, dir: Vec3) -> Mat4 {
+    return make_look_at_matrix(pos, dir, .{0, 1, 0}, false);
+}
+
+mat4_ortho :: orthographic_projection_matrix;
+
+mat4_inverse :: inverse;
+mat4_projection :: make_projection_matrix;
+mat4_translation :: make_translation_matrix4;
+mat4_scale :: make_scale_matrix4;
+mat4_rotation :: (q: Quaternion) -> Mat4 {
+    m := mat4_identity();
+    set_rotation(*m, q);
+    return m;
+}
+
+mat4_transpose :: transpose;
+
+quat_from_matrix :: get_rotation;
+
+nlerp_shortest :: (a: Quaternion, b: Quaternion, t: float) -> Quaternion
+{
+    first := a;
+    second := b;
+    if dot(first, second) < 0
+        second = -second;
+    return nlerp(first, second, t);
+}
+
+quat_axis_angle :: (axis: Vec3, angle: float) -> Quaternion {
+    q: Quaternion;
+    set_from_axis_and_angle(*q, axis.x, axis.y, axis.z, angle);
+    return q;
+}
+
+mat4_decompose :: (m: Mat4) -> Vector3, Quaternion, Vector3 {
+	translation := Vec3.{
+        m._14,
+        m._24,
+        m._34
+    };
+    
+	rotation := quat_from_matrix(m);
+    
+	scale := Vec3.{
+        length(Vec3.{m._11, m._21, m._31}),
+        length(Vec3.{m._12, m._22, m._32}),
+        length(Vec3.{m._13, m._23, m._33})
+    };
+    
+	return translation, rotation, scale;
+}
+
+mat4_euler_rotation :: (rotation: Vec3) -> Mat4 {
+    cX := cos(rotation.x);
+    sX := sin(rotation.x);
+    cY := cos(rotation.y);
+    sY := sin(rotation.y);
+    cZ := cos(rotation.z);
+    sZ := sin(rotation.z);
+    
+    m: Mat4 = ---;
+    
+    m._11 = cY * cZ;
+    m._12 = -cY * sZ;
+    m._13 = sY;
+    m._14 = 0;
+    
+    m._21 = sX * sY * cZ + cX * sZ;
+    m._22 = -sX * sY * sZ + cX * cZ;
+    m._23 = -sX * cY;
+    m._24 = 0;
+    
+    m._31 = -cX * sY * cZ + sX * sZ;
+    m._32 = cX * sY * sZ + sX * cZ;
+    m._33 = cX * cY;
+    m._34 = 0;
+    
+    m._41 = 0;
+    m._42 = 0;
+    m._43 = 0;
+    m._44 = 1;
+    
+    return m;
+}
+
+#scope_file
+
+#import "Basic";
+#import "Math";END OF .//math.jai
+
+START OF .//memory.jai
+
+Arena :: struct {
+    memory: *u8;
+    used, cap: u64 = 0;
+}
+
+create_arena :: (initial_cap := COMMIT_EXPAND_AMOUNT) -> Arena {
+    memory := platform_reserve(MAX_COMMITTED_SIZE);
+    if !memory {
+        value, text := get_error_value_and_string();
+        fatal_error(tprint("Failed to create arena: error_code=%, error_string=%", value, text));
+    }
+    
+    platform_commit(memory, 0, initial_cap);
+    
+    arena: Arena;
+    arena.memory = memory;
+    arena.cap = initial_cap;
+    return arena;
+}
+
+arena_alloc :: (arena: *Arena, size: u64, $zero := true) -> *void {
+    if arena.used + size >= arena.cap {
+        if arena.cap + COMMIT_EXPAND_AMOUNT >= MAX_COMMITTED_SIZE fatal_error("Arena exceded max committed size");
+        
+        remainder := size % COMMIT_EXPAND_AMOUNT;
+        commit_size := size;
+        if remainder != 0 commit_size += COMMIT_EXPAND_AMOUNT - remainder;
+        
+        platform_commit(arena.memory, arena.cap, commit_size);
+        arena.cap += commit_size;
+    }
+    
+    memory := arena.memory + arena.used;
+    #if zero memset(memory, 0, xx size);
+    arena.used += size;
+    return memory;
+}
+
+arena_push :: (arena: *Arena, $T: Type, $init_value := true) -> *T {
+    out := arena_alloc(arena, size_of(T), false);
+#if init_value {
+        init :: initializer_of(T);
+#if init init(out);
+    }
+    return out;
+}
+
+arena_push_n :: (arena: *Arena, $T: Type, n: u64, $init_value := true) -> [] T {
+    memory := arena_alloc(arena, size_of(T) * n, false);
+    out := []T.{xx n, memory};
+#if init_value {
+        init :: initializer_of(T);
+#if init {
+            for * out init(it);
+        }
+    }
+    return out;
+}
+
+arena_push_mark :: (arena: *Arena) -> u64 { return arena.used; }
+arena_pop_mark :: (arena: *Arena, mark: u64) { arena.used = mark; }
+
+arena_push_mark_defer :: (arena: *Arena) #expand {
+    `__arena_mark := arena_push_mark(arena);
+    defer arena_pop_mark(arena, __arena_mark);
+}
+
+arena_reset :: (arena: *Arena) { arena.used = 0; }
+
+Typed_Arena :: struct ($T: Type) {
+    using #as arena: Arena;
+}
+
+create_typed_arena :: ($T: Type, initial_cap: u64 = 128) -> Typed_Arena(T) {
+    return .{create_arena(size_of(T) * initial_cap)};
+}
+
+arena_push :: (arena: *Typed_Arena($T)) -> *T {
+    return arena_push(arena, T);
+}
+
+for_expansion :: (arena: *Typed_Arena($T), body: Code, flags: For_Flags) #expand {
+    num := cast(int) (arena.used / size_of(T));
+    for index: 0..num-1 {
+        `it := cast (*T) (arena.memory + index * size_of(T));
+        `it_index := index;
+#insert body;
+    }
+}
+
+init_memory_system :: () {
+    working_arena = create_arena();
+    frame_arena = create_arena();
+}
+
+working_arena: Arena;
+frame_arena: Arena;
+
+#scope_file
+
+#import "System";
+
+#if OS == .WINDOWS {
+
+#import "Windows";
+
+PAGE_SIZE :: 4096;
+
+platform_reserve :: (cap: u64) -> *u8 {
+    memory := VirtualAlloc(null, cap, MEM_RESERVE, PAGE_READWRITE);
+    return memory;
+}
+
+platform_commit :: (memory: *u8, base: u64, size: u64) {
+    VirtualAlloc(memory + base, size, MEM_COMMIT, PAGE_READWRITE);
+}
+
+} else #if OS == .LINUX {
+
+#import "POSIX";
+
+PAGE_SIZE :: 4096;
+
+platform_reserve :: (cap: u64) -> *u8 {
+    memory := mmap(null, cap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    if memory == (cast(*void)-1) return null; // linux uses a different return value for failed
+    return memory;
+}
+
+platform_commit :: (memory: *u8, base: u64, size: u64) {
+}
+
+}
+
+MAX_COMMITTED_SIZE :u64: 1024*1024*1024*4;
+COMMIT_EXPAND_AMOUNT :u64: 1024*1024;END OF .//memory.jai
+
+START OF .//mesh.jai
+
+Bone_Ids :: struct {
+    a, b, c, d: s16;
+}
+
+Bone :: struct {
+    id: int;
+    name: string;
+    local_bind_transform: Mat4;
+    inverse_bind_transform: Mat4;
+    parent: *Bone;
+}
+
+Skeleton :: struct {
+    bones: [] Bone;
+    bone_name_map: [] int;
+}
+
+Mesh :: struct {
+    path: string;
+    positions: [] Vec3;
+    tex_coords: [] Vec2;
+    tangents_normals: [] Vec4;
+    indices: [] u32;
+    
+    weights: [] Vec3;
+    bone_ids: [] Bone_Ids;
+    skeleton: *Skeleton;
+    
+    min_bounds: Vec3;
+    max_bounds: Vec3;
+}
+
+Animation :: struct {
+    path: string;
+    name: string;
+    bone_names: [] string;
+    bone_count: int;
+    sample_count: int;
+    positions: [] Vec3;
+    rotations: [] Quaternion;
+    scales: [] Vec3;
+}
+
+init_mesh_system :: () {
+    meshes = create_typed_arena(Mesh);
+    mesh_arena = create_arena();
+    
+    animations = create_typed_arena(Animation);
+    animation_arena = create_arena();
+}
+
+load_mesh :: (path: string) -> *Mesh {
+    for * meshes if equal(it.path, path) return it;
+    
+    file, success := file_open(path);
+    defer if success file_close(*file);
+    
+    if !success return *null_mesh;
+    
+    header := file_read_mesh_header(*file);
+    if !equal(header.magic, "MESH") {
+        print("Failed to load: % is not a mesh file!", path);
+        return *null_mesh;
+    }
+    
+    positions := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
+    tex_coords := file_read_array(*file, *mesh_arena, Vec2, header.num_vertices);
+    tangents_normals := file_read_array(*file, *mesh_arena, Vec4, header.num_vertices);
+    weights := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
+    bone_ids := file_read_array(*file, *mesh_arena, Bone_Ids, header.num_vertices);
+    indices := file_read_array(*file, *mesh_arena, u32, header.num_indices);
+    serialized_bones := file_read_bones(*file, *mesh_arena, header.num_bones);
+    
+    min_bounds := Vec3.{FLOAT32_MAX, FLOAT32_MAX, FLOAT32_MAX};
+    max_bounds := Vec3.{FLOAT32_MIN, FLOAT32_MIN, FLOAT32_MIN};
+    
+    for positions {
+        min_bounds.x = min(min_bounds.x, it.x);
+        min_bounds.y = min(min_bounds.y, it.y);
+        min_bounds.z = min(min_bounds.z, it.z);
+        
+        max_bounds.x = max(max_bounds.x, it.x);
+        max_bounds.y = max(max_bounds.y, it.y);
+        max_bounds.z = max(max_bounds.z, it.z);
+    }
+    
+    bones := arena_push_n(*mesh_arena, Bone, xx header.num_bones);
+    bone_name_map := arena_push_n(*mesh_arena, int, BONE_NAME_MAP_SIZE);
+    
+    for * bone_name_map {
+        it.* = -1;
+    }
+    
+    for serialized_bones {
+        bone: Bone;
+        bone.id = it.id;
+        bone.name = it.name;
+        
+        bone.local_bind_transform = it.transform;
+        
+        if it.parent == -1 {
+            bone.parent = null;
+            bone.inverse_bind_transform = bone.local_bind_transform;
+        } else {
+            bone.parent = *bones[it.parent];
+            bone.inverse_bind_transform = bone.parent.inverse_bind_transform * bone.local_bind_transform;
+        }
+        
+        hash := djb2_hash(it.name) % BONE_NAME_MAP_SIZE;
+        assert(bone_name_map[hash] == -1);
+        
+        bone_name_map[hash] = it_index;
+        
+        bones[it_index] = bone;
+    }
+    
+    for * bones {
+        it.inverse_bind_transform = mat4_inverse(it.inverse_bind_transform);
+    }
+    
+    skeleton := arena_push(*mesh_arena, Skeleton);
+    skeleton.bones = bones;
+    skeleton.bone_name_map = bone_name_map;
+    
+    mesh := arena_push(*meshes);
+    mesh.path = path;
+    mesh.positions = positions;
+    mesh.tex_coords = tex_coords;
+    mesh.tangents_normals = tangents_normals;
+    mesh.indices = indices;
+    mesh.weights = weights;
+    mesh.bone_ids = bone_ids;
+    mesh.skeleton = skeleton;
+    mesh.min_bounds = min_bounds;
+    mesh.max_bounds = max_bounds;
+    
+    return mesh;
+}
+
+find_bone :: (skeleton: *Skeleton, name: string) -> *Bone {
+    hash := djb2_hash(name) % BONE_NAME_MAP_SIZE;
+    return *skeleton.bones[skeleton.bone_name_map[hash]];
+}
+
+load_animation :: (path: string) -> *Animation {
+    for * animations if equal(it.path, path) return it;
+    
+    file, success := file_open(path);
+    defer if success file_close(*file);
+    
+    if !success return *null_animation;
+    
+    header := file_read_anim_header(*file);
+    if !equal(header.magic, "ANIM") {
+        print("Failed to load: % is not an anim file!", path);
+        return *null_animation;
+    }
+    
+    name := file_read_string(*file, *animation_arena);
+    
+    bone_names := arena_push_n(*animation_arena, string, xx header.bone_count);
+    for 0..header.bone_count-1 {
+        bone_names[it] = file_read_string(*file, *animation_arena);
+    }
+    
+    positions := file_read_array(*file, *animation_arena, Vec3, header.bone_count * header.sample_count);
+    rotations := file_read_array(*file, *animation_arena, Quaternion, header.bone_count * header.sample_count);
+    scales := file_read_array(*file, *animation_arena, Vec3, header.bone_count * header.sample_count);
+    
+    anim := arena_push(*animations);
+    anim.name = name;
+    anim.path = path;
+    anim.sample_count = header.sample_count;
+    anim.bone_count = header.bone_count;
+    anim.bone_names = bone_names;
+    anim.positions = positions;
+    anim.rotations = rotations;
+    anim.scales = scales;
+    
+    return anim;
+}
+
+#scope_file
+
+#import "Basic";
+#import "Sort";
+#import "File";
+
+BONE_NAME_MAP_SIZE :: 2048;
+
+Mesh_Header :: struct {
+    magic: string;
+    num_vertices: int;
+    num_indices: int;
+    num_bones: int;
+}
+
+Anim_Header :: struct {
+    magic: string;
+    sample_count: int;
+    bone_count: int;
+}
+
+Serialized_Bone :: struct {
+    id: s16;
+    parent: s16;
+    name: string;
+    transform: Mat4;
+}
+
+Serialized_Animation :: struct {
+    name: string;
+    sample_count: int;
+    bone_names: [..] string;
+    positions: [..] Vec3;
+    rotations: [..] Quaternion;
+    scales: [..] Vec3;
+}
+
+file_read_bones :: (file: *File, arena: *Arena, count: int) -> [] Serialized_Bone {
+    bones := arena_push_n(arena, Serialized_Bone, xx count);
+    
+    for 0..count-1 {
+        id: s16;
+        file_read(file, *id, size_of(s16));
+        
+        parent: s16;
+        file_read(file, *parent, size_of(s16));
+        
+        name := file_read_string(file, arena);
+        
+        transform: Mat4;
+        file_read(file, transform.floats.data, size_of(float) * 16);
+        
+        bones[it] = Serialized_Bone.{id, parent, name, transform};
+    }
+    
+    return bones;
+}
+
+file_read_mesh_header :: (file: *File) -> Mesh_Header {
+    header: Mesh_Header;
+    header.magic = file_read_string(file, *mesh_arena);
+    file_read(file, *header.num_vertices, size_of(int));
+    file_read(file, *header.num_indices, size_of(int));
+    file_read(file, *header.num_bones, size_of(int));
+    return header;
+}
+
+file_read_anim_header :: (file: *File) -> Anim_Header {
+    header: Anim_Header;
+    header.magic = file_read_string(file, *animation_arena);
+    file_read(file, *header.sample_count, size_of(int));
+    file_read(file, *header.bone_count, size_of(int));
+    return header;
+}
+
+null_mesh: Mesh;
+null_animation: Animation;
+
+meshes: Typed_Arena(Mesh);
+mesh_arena: Arena;
+
+animations: Typed_Arena(Animation);
+animation_arena: Arena;END OF .//mesh.jai
+
+START OF .//renderer.jai
+
+camera: Camera;
+
+init_renderer :: () {
+    gl_load(*gl);
+    gl_enable_debug_output();
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    
+    renderer_arena = create_arena();
+    
+    commands = arena_push_n(*renderer_arena, Draw_Command, MAX_DRAW_COMMANDS);
+    commands.count = 0;
+    
+    position_buffer = create_buffer("position_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
+    tex_coord_buffer = create_buffer("tex_coord_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec2));
+    tangent_normal_buffer = create_buffer("normal_buffer", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec4));
+    index_buffer = create_buffer("index_buffer", GL_ELEMENT_ARRAY_BUFFER, MAX_INDICES * size_of(u32));
+    bone_ids_buffer = create_buffer("bone_ids", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Bone_Ids));
+    bone_weights_buffer = create_buffer("bone_weights", GL_ARRAY_BUFFER, MAX_VERTICES * size_of(Vec3));
+    skinning_buffer = create_buffer("skinning_buffer", GL_UNIFORM_BUFFER, MAX_BONES * size_of(Mat4));
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, skinning_buffer);
+    
+    glGenVertexArrays(1, *vertex_array);
+    glBindVertexArray(vertex_array);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, position_buffer);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, size_of(Vec2), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, tangent_normal_buffer);
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, size_of(Vec4), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+    glEnableVertexAttribArray(3);
+    glVertexAttribIPointer(3, 4, GL_SHORT, size_of(Bone_Ids), xx 0);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, size_of(Vec3), xx 0);
+    
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    
+    pixels := u8.[200, 200, 200, 255];
+    default_grey_texture = create_texture("default_grey", 1, 1, pixels.data);
+    
+    glGenTextures(1, *shadow_map_texture);
+    glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, null);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    glGenFramebuffers(1, *shadow_map_frame_buffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_map_frame_buffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadow_map_texture, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
+    direction := normalize(end - start);
+    up := Vec3.{0, 1, 0};
+    
+    right := normalize(cross_product(up, direction)) * thickness * 0.5;
+    forward := normalize(cross_product(direction, right)) * thickness * 0.5;
+    
+    positions: [8] Vec3;
+    positions[0] = start + right + forward;
+    positions[1] = start - right + forward;
+    positions[2] = start - right - forward;
+    positions[3] = start + right - forward;
+    positions[4] = end + right + forward;
+    positions[5] = end - right + forward;
+    positions[6] = end - right - forward;
+    positions[7] = end + right - forward;
+    
+    tangents_normals := Vec4.[.{},.{},.{},.{},.{},.{},.{},.{}];
+    
+    indices := u32.[
+                    // Front face
+                    0, 1, 5, 0, 5, 4,
+                    // Back face
+                    3, 2, 6, 3, 6, 7,
+                    // Left face
+                    1, 2, 6, 1, 6, 5,
+                    // Right face
+                    0, 3, 7, 0, 7, 4,
+                    // Top face
+                    0, 1, 2, 0, 2, 3,
+                    // Bottom face
+                    4, 5, 6, 4, 6, 7
+                    ];
+    
+    tex_coords := Vec2.[.{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}, .{0, 0}];
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_coloured_mesh;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = mat4_identity();
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
+    command.colour = colour;
+    command.flags = .NO_DEPTH_TEST | .NO_BACKFACE_CULL;
+    
+    add_render_command(command);
+}
+
+draw_pose :: (player: *Anim_Player, transform: Mat4) {
+    colours := Vec4.[
+                     .{1, 0, 0, 1},    // Red
+                     .{0, 1, 0, 1},    // Green
+                     .{0, 0, 1, 1},    // Blue
+                     .{1, 1, 0, 1},    // Yellow
+                     .{1, 0, 1, 1},    // Magenta
+                     .{0, 1, 1, 1},    // Cyan
+                     .{0.5, 0.5, 0.5, 1},  // Grey
+                     .{1, 0.5, 0, 1},  // Orange
+                     .{0.5, 0, 0.5, 1},  // Purple
+                     .{0.5, 1, 0, 1},  // Lime
+                     ];
+    
+    pose := *player.pose;
+    for pose.bone_names {
+        bone := find_bone(player.mesh.skeleton, it);
+        
+        parent_transform := transform * pose.parent_model_space_transforms[bone.id];
+		world_space_transform := transform * pose.model_space_transforms[bone.id];
+        
+		start := Vec3.{
+            parent_transform._14,
+            parent_transform._24,
+            parent_transform._34
+        };
+        
+		end := Vec3.{
+            world_space_transform._14,
+            world_space_transform._24,
+            world_space_transform._34
+        };
+        
+        draw_line(start, end, 0.01, colours[it_index % 10]);
+    }
+}
+
+draw_2d_quad :: (position: Vec2, size: Vec2, colour: Vec4) {
+    positions := Vec3.[
+                       .{position.x, position.y, 0},
+                       .{position.x + size.x, position.y, 0},
+                       .{position.x + size.x, position.y + size.y, 0},
+                       .{position.x, position.y + size.y, 0}
+                       ];
+    
+    tex_coords := Vec2.[
+                        .{0.0, 0.0},
+                        .{1.0, 0.0},
+                        .{1.0, 1.0},
+                        .{0.0, 1.0}
+                        ];
+    
+    indices := u32.[
+                    0, 1, 2,
+                    0, 2, 3
+                    ];
+    
+    tangents_normals := Vec4.[
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0}
+                              ];
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_2d_textured;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = mat4_identity();
+    command.projection = mat4_ortho(0, 1366, 0, 768, -999, 999);
+    command.colour = colour;
+    command.flags = .NO_DEPTH_TEST;
+    
+    add_render_command(command);
+}
+
+draw_textured_quad :: (position: Vec2, size: Vec2, colour: Vec4, texture: *Texture) {
+    positions := Vec3.[
+                       .{position.x, position.y, 0},
+                       .{position.x + size.x, position.y, 0},
+                       .{position.x + size.x, position.y + size.y, 0},
+                       .{position.x, position.y + size.y, 0}
+                       ];
+    
+    tex_coords := Vec2.[
+                        .{0.0, 0.0},
+                        .{1.0, 0.0},
+                        .{1.0, 1.0},
+                        .{0.0, 1.0}
+                        ];
+    
+    indices := u32.[
+                    0, 1, 2,
+                    0, 2, 3
+                    ];
+    
+    tangents_normals := Vec4.[
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0}
+                              ];
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_2d_textured;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = mat4_identity();
+    command.projection = mat4_ortho(0, 1366, 0, 768, -999, 999);
+    command.colour = colour;
+    command.textures[0] = texture.id;
+    command.flags = .NO_DEPTH_WRITE;
+    
+    add_render_command(command);
+}
+
+draw_mesh :: (mesh: *Mesh, transform: Mat4) {
+    positions := mesh.positions;
+    tex_coords := mesh.tex_coords;
+    indices := mesh.indices;
+    tangents_normals := mesh.tangents_normals;
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_coloured_mesh;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = transform;
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
+    command.colour = .{1, 1, 1, 1};
+    command.mesh = mesh;
+    
+    add_render_command(command);
+}
+
+draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
+    positions := mesh.positions;
+    tex_coords := mesh.tex_coords;
+    indices := mesh.indices;
+    tangents_normals := mesh.tangents_normals;
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, mesh.bone_ids, mesh.weights);
+    
+    glBindBuffer(GL_UNIFORM_BUFFER, skinning_buffer);
+    skinning_transforms := player.pose.skinning_transforms;
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, skinning_transforms.count * size_of(Mat4), skinning_transforms.data);
+    
+    test_texture := load_texture("mesh/man/textures/man-test-texture.png");
+    
+    command: Draw_Command;
+    command.shader = shader_coloured_mesh;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = transform;
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
+    command.colour = .{1, 1, 1, 1};
+    command.textures[0] = test_texture.id;
+    command.mesh = mesh;
+    
+    add_render_command(command);
+}
+
+renderer_draw_frame :: () {
+    glClearColor(0,0,0,0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_map_frame_buffer);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    
+    light_pos := Vec3.{0, 250, 0};
+    look_at_target := Vec3.{0, 0, 0};
+    light_dir := normalize(look_at_target - light_pos);
+    ortho_size := 25.0;
+    
+    light_view := mat4_look_at(light_pos, light_dir);
+    light_projection := mat4_ortho(-ortho_size, ortho_size, -ortho_size, ortho_size, NEAR_Z_PLANE, FAR_Z_PLANE);
+    light_matrix := light_projection * light_view;
+    
+    for commands {
+        glUseProgram(it.shader.id);
+        
+        set_shader_mat4(it.shader, "transform_matrix", it.transform);
+        set_shader_mat4(it.shader, "view_matrix", light_view);
+        set_shader_mat4(it.shader, "projection_matrix", light_projection);
+        
+        if it.shader.type == {
+            case .COLOURED_MESH;
+            prepare_coloured_mesh_shader(it.mesh, it.shader);
+            case .TEXTURED;
+            prepare_2d_textured_shader(it.shader);
+        }
+        
+        if it.flags & .NO_DEPTH_WRITE glDepthMask(GL_FALSE);
+        
+        glDrawElementsBaseVertex(GL_TRIANGLES, xx it.index_count, GL_UNSIGNED_INT, cast(*void) (it.first_index * size_of(u32)), xx it.first_vertex);
+        
+        if it.flags & .NO_DEPTH_WRITE glDepthMask(GL_TRUE);
+    }
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    
+    glViewport(0, 0, 1366, 768); // @todo
+    
+    for commands {
+        glUseProgram(it.shader.id);
+        
+        set_shader_mat4(it.shader, "transform_matrix", it.transform);
+        set_shader_mat4(it.shader, "view_matrix", camera.view);
+        set_shader_mat4(it.shader, "projection_matrix", it.projection);
+        set_shader_mat4(it.shader, "light_matrix", light_matrix);
+        set_shader_vec4(it.shader, "base_colour", it.colour);
+        set_shader_vec4(it.shader, "screen_params", .{1366, 768, 0, 0}); //@todo
+        set_shader_vec3(it.shader, "camera_position", camera.position);
+        
+        if it.shader.type == {
+            case .COLOURED_MESH;
+            prepare_coloured_mesh_shader(it.mesh, it.shader);
+        }
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
+        
+        for it.textures {
+            glActiveTexture(GL_TEXTURE1 + cast (u32) it_index);
+            if it == 0 {
+                glBindTexture(GL_TEXTURE_2D, default_grey_texture.id);
+            } else {
+                glBindTexture(GL_TEXTURE_2D, it);
+            }
+        }
+        
+        if it.flags & .NO_DEPTH_TEST glDisable(GL_DEPTH_TEST);
+        
+        if it.flags & .NO_BACKFACE_CULL {
+            glDisable(GL_CULL_FACE);
+        }
+        
+        glDrawElementsBaseVertex(GL_TRIANGLES, xx it.index_count, GL_UNSIGNED_INT, cast(*void) (it.first_index * size_of(u32)), xx it.first_vertex);
+        
+        if it.flags & .NO_DEPTH_TEST glEnable(GL_DEPTH_TEST);
+        
+        if it.flags & .NO_BACKFACE_CULL {
+            glEnable(GL_CULL_FACE);
+        }
+    }
+    
+    written_indices = 0;
+    written_vertices = 0;
+    commands.count = 0;
+}
+
+MAX_BONES :: 1000;
+MAX_WEIGHTS :: 4;
+
+#scope_file
+
+#import "GL";
+
+MAX_DRAW_COMMANDS :: 1000;
+MAX_VERTICES :: 200000;
+MAX_INDICES :: 200000;
+
+renderer_arena: Arena;
+
+commands: [] Draw_Command;
+
+add_render_command :: (command: Draw_Command)  #no_abc {
+    if commands.count + 1 >= MAX_DRAW_COMMANDS fatal_error("out of draw commands");
+    commands[commands.count] = command;
+    commands.count += 1;
+}
+
+default_grey_texture: *Texture;
+
+NEAR_Z_PLANE :: 0.01;
+FAR_Z_PLANE :: 1000.0;
+
+SHADOW_MAP_SIZE :: 4096;
+shadow_map_frame_buffer: u32;
+shadow_map_texture: u32;
+
+position_buffer: u32;
+tex_coord_buffer: u32;
+tangent_normal_buffer: u32;
+index_buffer: u32;
+bone_ids_buffer: u32;
+bone_weights_buffer: u32;
+skinning_buffer: u32;
+
+vertex_array: u32;
+
+written_vertices: int;
+written_indices: int;
+
+Draw_Command_Flags :: enum_flags {
+    NO_DEPTH_TEST;
+    NO_DEPTH_WRITE;
+    NO_BACKFACE_CULL;
+}
+
+Draw_Command :: struct {
+    shader: *Shader;
+    first_vertex: int;
+    first_index: int;
+    index_count: int;
+    textures: [8] u32;
+    transform: Mat4;
+    projection: Mat4;
+    colour: Vec4;
+    flags: Draw_Command_Flags;
+    
+    // extra info for certain draw calls
+    mesh: *Mesh;
+}
+
+create_buffer :: (name: string, target: u32, size: int) -> u32 {
+    id: u32;
+    glGenBuffers(1, *id);
+    glBindBuffer(target, id);
+    glBufferData(target, xx size, null, GL_STATIC_DRAW);
+    glObjectLabel(GL_BUFFER, id, xx name.count, name.data);
+    return id;
+}
+
+write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, tangents_normals: [] Vec4, indices: [] u32, bone_ids: [] Bone_Ids, bone_weights: [] Vec3) -> int, int {
+    assert(tex_coords.count == positions.count);
+    assert(tangents_normals.count == positions.count);
+    
+    if written_vertices + positions.count >= MAX_VERTICES {
+        fatal_error("Out of vertices: written %, wanted %, max is %", written_vertices, positions.count, MAX_VERTICES);
+    }
+    if written_indices + indices.count >= MAX_INDICES {
+        fatal_error("Out of indices: written %, wanted %, max is %", written_indices, indices.count, MAX_INDICES);
+    }
+    
+    first_vertex := written_vertices;
+    first_index := written_indices;
+    
+    glBindBuffer(GL_ARRAY_BUFFER, position_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), positions.count * size_of(Vec3), positions.data);
+    glBindBuffer(GL_ARRAY_BUFFER, tex_coord_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec2), tex_coords.count * size_of(Vec2), tex_coords.data);
+    glBindBuffer(GL_ARRAY_BUFFER, tangent_normal_buffer);
+    glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec4), tangents_normals.count * size_of(Vec4),
+                    tangents_normals.data);
+    
+    if (bone_ids.count > 0) {
+        assert(bone_ids.count == positions.count);
+        assert(bone_weights.count == positions.count);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Bone_Ids), bone_ids.count * size_of(Bone_Ids),
+                        bone_ids.data);
+        glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), bone_weights.count * size_of(Vec3),
+                        bone_weights.data);
+    } else {
+        empty_bone_ids := arena_push_n(*frame_arena, Bone_Ids, xx positions.count);
+        for * empty_bone_ids it.* = .{-1, -1, -1, -1};
+        empty_bone_weights := arena_push_n(*frame_arena, Vec3, xx positions.count);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, bone_ids_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Bone_Ids), empty_bone_ids.count * size_of(Bone_Ids),
+                        empty_bone_ids.data);
+        glBindBuffer(GL_ARRAY_BUFFER, bone_weights_buffer);
+        glBufferSubData(GL_ARRAY_BUFFER, written_vertices * size_of(Vec3), empty_bone_weights.count * size_of(Vec3),
+                        empty_bone_weights.data);
+    }
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, written_indices * size_of(u32), indices.count * size_of(u32), indices.data);
+    
+    written_vertices += positions.count;
+    written_indices += indices.count;
+    
+    return first_vertex, first_index;
+}END OF .//renderer.jai
+
+START OF .//shader.jai
+
+Shader :: struct {
+    id: u32;
+    uniforms: [..] s32;
+    hash_map: [] int;
+    type: Shader_Type;
+}
+
+get_uniform_location :: (shader: *Shader, name: string) -> s32 {
+    hash_index := djb2_hash(name) % UNIFORM_MAP_SIZE;
+    index := shader.hash_map[hash_index];
+    if index == -1 return -1;
+    
+    loc := shader.uniforms[index];
+    return loc;
+}
+
+set_shader_int :: (shader: *Shader, name: string, value: s32) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform1i(loc, value);
+}
+
+set_shader_vec2 :: (shader: *Shader, name: string, value: Vec2) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform2f(loc, value.x, value.y);
+}
+
+set_shader_vec3 :: (shader: *Shader, name: string, value: Vec3) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform3f(loc, value.x, value.y, value.z);
+}
+
+set_shader_vec4 :: (shader: *Shader, name: string, value: Vec4) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform4f(loc, value.x, value.y, value.z, value.w);
+}
+
+set_shader_mat4 :: (shader: *Shader, name: string, value: Mat4) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniformMatrix4fv(loc, 1, GL_TRUE, cast (*float) *value);
+}
+
+set_shader_texture :: (shader: *Shader, name: string, unit: u32) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform1i(loc, xx unit);
+}
+
+create_shader :: (name: string, type: Shader_Type, shader_text: string) -> *Shader {
+    make_shader_object :: (name: string, shader: string, prefix: string, shader_type : u32) -> u32 {
+        shader_object := glCreateShader(shader_type);
+        
+        shaders: [2] *u8;
+        lengths: [2] s32;
+        
+        shaders[0] = prefix.data;
+        shaders[1] = shader.data;
+        lengths[0] = xx prefix.count;
+        lengths[1] = xx shader.count;
+        
+        glShaderSource(shader_object, 2, shaders.data, lengths.data);
+        
+        glCompileShader(shader_object);
+        
+        success : GLint;
+        glGetShaderiv(shader_object, GL_COMPILE_STATUS, *success);
+        
+        if !success then {
+            log_data: [4096] u8;
+            glGetShaderInfoLog(shader_object, log_data.count, null, log_data.data);
+            fatal_error("Error compiling shader file %: %", name, to_string(log_data.data));
+            return 0;
+        }
+        
+        return shader_object;
+    }
+    
+    PREFIX_V := #string HERE
+#version 330 core
+#define VERTEX_SHADER 1
+#define FRAGMENT_SHADER 0
+#define INOUT out
+#define FLAT_INOUT flat out
+        HERE;
+    
+    PREFIX_F := #string HERE
+#version 330 core
+#define VERTEX_SHADER 0
+#define FRAGMENT_SHADER 1
+#define INOUT in
+#define FLAT_INOUT flat in
+        HERE;
+    
+    shader_v := make_shader_object(tprint("%_vertex_shader", name), shader_text, PREFIX_V, GL_VERTEX_SHADER);
+    shader_f := make_shader_object(tprint("%_fragment_shader", name), shader_text, PREFIX_F, GL_FRAGMENT_SHADER);
+    shader_p := glCreateProgram();
+    
+    glAttachShader(shader_p, shader_v);
+    glAttachShader(shader_p, shader_f);
+    glLinkProgram(shader_p);
+    
+    success : GLint = 0;
+    glGetProgramiv(shader_p, GL_LINK_STATUS, *success);
+    
+    if !success {
+        log_data: [4096] u8;
+        glGetProgramInfoLog(shader_p, log_data.count, null, log_data.data);
+        fatal_error("Error linking program object %: %", name, to_string(log_data.data));
+        return *null_shader;
+    }
+    
+    glDeleteShader(shader_v);
+    glDeleteShader(shader_f);
+    
+    glValidateProgram(shader_p);
+    glGetProgramiv(shader_p, GL_VALIDATE_STATUS, *success);
+    
+    if !success {
+        log_data: [4096] u8;
+        glGetProgramInfoLog(shader_p, log_data.count, null, log_data.data);
+        fatal_error("Error validating program object %: %", name, to_string(log_data.data));
+        return *null_shader;
+    }
+    
+    shader := arena_push(*shaders);
+    shader.id = shader_p;
+    shader.hash_map = arena_push_n(*shader_arena, int, UNIFORM_MAP_SIZE);
+    shader.type = type;
+    
+    for 0..UNIFORM_MAP_SIZE-1 shader.hash_map[it] = -1;
+    
+    active_uniform_count: s32;
+    glGetProgramiv(shader_p, GL_ACTIVE_UNIFORMS, *active_uniform_count);
+    for 0..active_uniform_count-1 {
+        buffer: [128] u8;
+        length: u32;
+        size: s32;
+        type: u32;
+        glGetActiveUniform(shader_p, xx it, 128, *length, *size, *type, buffer.data);
+        loc := glGetUniformLocation(shader_p, buffer.data);
+        
+        uniform_name := cast(string) buffer;
+        uniform_name.count = c_style_strlen(buffer.data);
+        
+        hash_index := djb2_hash(uniform_name) % UNIFORM_MAP_SIZE;
+        assert(shader.hash_map[hash_index] == -1);
+        
+        shader.hash_map[hash_index] = shader.uniforms.count;
+        
+        array_add(*shader.uniforms, loc);
+    }
+    
+    return shader;
+}
+
+#scope_file
+
+#import "Hash";
+#import "Print_Vars";
+
+UNIFORM_MAP_SIZE :: 2048;
+
+shader_arena: Arena;
+shaders: Typed_Arena(Shader);
+null_shader: Shader;
+
+#scope_export
+
+Shader_Type :: enum {
+    COLOURED_MESH;
+    TEXTURED;
+}
+
+shader_coloured_mesh: *Shader;
+shader_2d_textured: *Shader;
+
+init_shader_system :: () {
+    shaders = create_typed_arena(Shader);
+    shader_arena = create_arena();
+    
+    shader_coloured_mesh = create_shader("shader_coloured_mesh", .COLOURED_MESH, SHADER_COLOURED_MESH_TEXT);
+    shader_2d_textured = create_shader("shader_2d_textured", .TEXTURED, SHADER_TEXTURED_TEXT);
+    
+    uniform_index := glGetUniformBlockIndex (shader_coloured_mesh.id, "Skinning_Transforms");
+	glUniformBlockBinding (shader_coloured_mesh.id, uniform_index, 0);
+}
+
+prepare_coloured_mesh_shader :: (mesh: *Mesh, shader: *Shader) {
+    set_shader_vec3(shader, "mesh_min_bounds", mesh.min_bounds);
+    set_shader_vec3(shader, "mesh_max_bounds", mesh.max_bounds);
+    set_shader_texture(shader, "shadow_map", 0);
+    set_shader_texture(shader, "base_texture", 1);
+}
+
+prepare_2d_textured_shader :: (shader: *Shader) {
+    set_shader_texture(shader, "base_texture", 0);
+}
+
+SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
+                                         %1
+#if VERTEX_SHADER
+                                         layout(location = 0) in vec3 vertex_position;
+                                         layout(location = 1) in vec2 vertex_tex_coord;
+                                         layout(location = 2) in vec4 vertex_tangent_normal;
+                                         layout(location = 3) in ivec4 bone_ids;
+                                         layout(location = 4) in vec3 bone_weights;
+                                         
+                                         const int MAX_BONES  = %2;
+                                         const int MAX_WEIGHTS = %3;
+                                         
+                                         layout (std140) uniform Skinning_Transforms
+                                         {
+                                             mat4 skinning_transforms[MAX_BONES];
+                                         };
+                                         
+                                         uniform mat4 transform_matrix;
+                                         uniform mat4 view_matrix;
+                                         uniform mat4 projection_matrix;
+                                         uniform mat4 light_matrix;
+                                         uniform vec4 base_colour;
+                                         
+                                         void main() {
+                                             vec3 position = vertex_position;
+                                             vec3 normal = unpack_normal(vertex_tangent_normal.xy);
+                                             vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
+                                             //vec3 bitangent = cross(normal, tangent) * sign(dot(cross(normal, tangent), bitangent));
+                                             
+                                             vec3 model_position = vec3(0);
+                                             vec3 model_normal = vec3(0);
+                                             vec3 model_tangent = vec3(0);
+                                             
+                                             if (bone_ids.x == -1) {
+                                                 model_position = vertex_position;
+                                                 model_normal = normal;
+                                                 model_tangent = tangent;
+                                             }
+                                             
+                                             for (int i = 0; i < MAX_WEIGHTS && bone_ids[i] != -1; i += 1) {
+                                                 int bone_id = bone_ids[i];
+                                                 float weight = 0;
+                                                 if (i == MAX_WEIGHTS - 1) {
+                                                     weight = 1.0 - (bone_weights.x+bone_weights.y+bone_weights.z);
+                                                 } else {
+                                                     weight = bone_weights[i];
+                                                 }
+                                                 
+                                                 mat4 skinning_matrix = skinning_transforms[bone_id];
+                                                 
+                                                 vec3 pose_position = (skinning_matrix * vec4(position, 1)).xyz;
+                                                 vec3 pose_normal = (skinning_matrix * vec4(normal, 1)).xyz;
+                                                 vec3 pose_tangent = (skinning_matrix * vec4(tangent, 1)).xyz;
+                                                 
+                                                 model_position += pose_position * weight;
+                                                 model_normal += pose_normal * weight;
+                                                 model_tangent += pose_tangent * weight;
+                                             }
+                                             
+                                             mat4 MVP = projection_matrix * view_matrix * transform_matrix;
+                                             vec4 ndc_position = MVP * vec4(model_position, 1);
+                                             
+                                             gl_Position = ndc_position;// snap_ps1(MVP, ndc_position, mesh_min_bounds, mesh_max_bounds, screen_params.xy);
+                                             
+                                             vec4 world_position = transform_matrix * vec4(model_position, 1);
+                                             frag_position = world_position.xyz;
+                                             frag_light_space_position = light_matrix * vec4(model_position, 1);
+                                             frag_normal = (transpose(inverse(transform_matrix)) * vec4(model_normal, 1)).xyz;
+                                             frag_tex_coord = vertex_tex_coord;
+                                             frag_colour = base_colour;
+                                         }
+                                         
+#endif
+                                         
+#if FRAGMENT_SHADER
+                                         
+                                         out vec4 output_colour;
+                                         
+                                         uniform sampler2D base_texture;
+                                         
+                                         void main() {
+                                             vec3 light_colour = vec3(1.0, 1.0, 0.8);
+                                             vec3 params = vec3(0.1, 0.5, 32.0);
+                                             vec3 colour = texture(base_texture, frag_tex_coord).xyz * frag_colour.xyz;
+                                             
+                                             colour = ambient_lighting(light_pos, light_dir, light_colour, camera_position, frag_position, frag_light_space_position, colour, frag_normal, params);
+                                             
+                                             output_colour = vec4(colour, 1);
+                                         }
+                                         
+#endif
+                                         HERE, SHADER_SHARED_TEXT, MAX_BONES, MAX_WEIGHTS);
+
+SHADER_TEXTURED_TEXT :: #run sprint(#string HERE
+                                    %1
+#if VERTEX_SHADER
+                                    layout(location = 0) in vec3 vertex_position;
+                                    layout(location = 1) in vec2 vertex_tex_coord;
+                                    layout(location = 2) in vec4 vertex_tangent_normal;
+                                    
+                                    uniform mat4 transform_matrix;
+                                    uniform mat4 projection_matrix;
+                                    uniform vec4 base_colour;
+                                    
+                                    void main() {
+                                        vec3 position = vertex_position;
+                                        vec3 normal = unpack_normal(vertex_tangent_normal.xy);
+                                        vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
+                                        
+                                        mat4 MVP = projection_matrix * transform_matrix;
+                                        vec4 ndc_position = MVP * vec4(position, 1);
+                                        
+                                        gl_Position = ndc_position;
+                                        frag_tex_coord = vertex_tex_coord;
+                                        frag_colour = base_colour;
+                                    }
+                                    
+#endif
+                                    
+#if FRAGMENT_SHADER
+                                    
+                                    out vec4 output_colour;
+                                    
+                                    uniform sampler2D base_texture;
+                                    
+                                    void main() {
+                                        vec4 sample = texture(base_texture, frag_tex_coord);
+                                        float depth = sample.r;
+                                        output_colour = frag_colour * vec4(depth, depth, depth, 1);
+                                    }
+                                    
+#endif
+                                    HERE, SHADER_SHARED_TEXT);
+
+SHADER_SHARED_TEXT :: #string HERE
+INOUT vec2 frag_tex_coord;
+INOUT vec4 frag_colour;
+INOUT vec3 frag_position;
+INOUT vec3 frag_normal;
+INOUT vec4 frag_light_space_position;
+
+uniform vec4 screen_params;
+uniform vec3 camera_position;
+uniform vec3 mesh_min_bounds;
+uniform vec3 mesh_max_bounds;
+uniform vec3 light_pos;
+uniform vec3 light_dir;
+
+uniform sampler2D shadow_map;
+
+float shadow_calculation(vec4 light_space_position, vec3 object_normal, vec3 light_dir)
+{
+    vec3 proj_coord = light_space_position.xyz / light_space_position.w;
+    proj_coord = proj_coord * 0.5 + 0.5;
+    float closest = texture(shadow_map, proj_coord.xy).r; 
+    float current = proj_coord.z;
+    float bias = .005;//max(0.05 * (1.0 - dot(object_normal, light_dir)), 0.005);
+    float shadow = current - bias > closest  ? 1.0 : 0.0;
+    return shadow;
+}  
+
+vec3 ambient_lighting(vec3 light_pos, vec3 light_dir, vec3 light_colour, vec3 camera_pos, vec3 object_pos, vec4 light_space_position, vec3 object_colour, vec3 object_normal, vec3 params) {
+    vec3 normal = normalize(object_normal);
+    
+    float ambient = params.x;
+    
+    vec3 dir = normalize(light_pos - object_pos);
+    float diffuse = max(dot(dir, normal), 0.0) * params.y;
+    
+    vec3 view_dir = normalize(camera_pos - object_pos);
+    vec3 half_dir = normalize(dir + view_dir);
+    float specular = pow(max(dot(normal, half_dir), 0.0), params.z);
+    
+    float shadow = shadow_calculation(light_space_position, object_normal, light_dir);
+    
+    vec3 lighting = (ambient + (1.0 - shadow) * (diffuse + specular)) * light_colour;
+    
+    return lighting * object_colour;
+}
+
+vec2 get_screen_size(mat4 MVP, vec3 min_bounds, vec3 max_bounds, vec2 screen_size) {
+    vec4 clip_min = MVP * vec4(min_bounds, 1);
+    vec4 clip_max = MVP * vec4(max_bounds, 1);
+    
+    vec3 ndc_min = clip_min.xyz / clip_min.w;
+    vec3 ndc_max = clip_max.xyz / clip_max.w;
+    
+    vec2 screen_min = (ndc_min.xy * 0.5 + 0.5) * screen_size;
+    vec2 screen_max = (ndc_max.xy * 0.5 + 0.5) * screen_size;
+    
+    return screen_max - screen_min;
+}
+
+vec4 snap_ps1(mat4 MVP, vec4 position, vec3 min_bounds, vec3 max_bounds, vec2 screen_size) {
+    vec2 res = vec2(50);
+    
+    vec2 snapped = position.xy / position.w;
+    snapped.x = floor(snapped.x * res.x) / res.x;
+    snapped.y = floor(snapped.y * res.y) / res.y;
+    snapped *= position.w;
+    return vec4(snapped, position.zw);
+}
+
+vec3 unpack_normal(vec2 normal) {
+    float z = sqrt(1.0 - dot(normal, normal));
+    return vec3(normal.xy, z);
+}
+
+vec3 unpack_tangent(vec2 tangent) {
+    float z = sqrt(1.0 - dot(tangent, tangent));
+    return vec3(tangent.xy, z);
+}
+
+HEREEND OF .//shader.jai
+
+START OF .//stb_bindings.jai
+// stb_image
+
+stb_load_image :: (filename: *u8, x: *s32, y: *s32, channels_in_file: *s32, desired_channels: s32) -> *u8 
+#foreign stb_image "stbi_load";
+
+stb_image_free :: (memory: *void) 
+#foreign stb_image "stbi_image_free";
+
+// stb_truetype
+
+/*
+Stb_Buffer :: struct {
+    data: *u8;
+    cursor: s32;
+    size: s32;
+}
+
+Stb_Aligned_Quad :: struct {
+    x0: float32;
+    y0: float32;
+    s0: float32;
+    t0: float32;
+    x1: float32;
+    y1: float32;
+    s1: float32;
+    t1: float32;
+}
+
+Stb_Packed_Char :: struct {
+    x0: u16;
+    y0: u16;
+    x1: u16;
+    y1: u16;
+    xoff: float32;
+    yoff: float32;
+    xadvance: float32;
+    xoff2: float32;
+    yoff2: float32;
+}
+
+Stb_Pack_Context :: struct {
+    userAllocatorContext: *void;
+    packInfo: *void;
+    width: s32;
+    height: s32;
+    strideInBytes: s32;
+    padding: s32;
+    skipMissing: s32;
+    h_oversample: u32;
+    v_oversample: u32;
+    pixels: *u8;
+    nodes: *void;
+}
+
+Stb_Font_Info :: struct {
+    userdata : *void;
+    data: *u8;
+    fontstart: s32;
+    numGlyphs: s32;
+    loca: s32;
+    head: s32;
+    glyf: s32;
+    hhea: s32;
+    hmtx: s32;
+    kern: s32;
+    gpos: s32;
+    svg: s32;
+    indexMap: s32;
+    indexToLocFormat: s32;
+    cff: Stb_Buffer;
+    charstrings: Stb_Buffer;
+    gsubrs: Stb_Buffer;
+    subrs: Stb_Buffer;
+    fontdicts: Stb_Buffer;
+    fdselect: Stb_Buffer;
+}
+
+stb_pack_begin :: (spc: *Stb_Pack_Context, pixels: *u8, width: s32, height: s32, strideInBytes: s32, padding: s32, allocContext: *void) -> s32 
+#foreign stb_truetype "stbtt_PackBegin";
+
+stb_pack_end :: (spc: *Stb_Pack_Context)
+#foreign stb_truetype "stbtt_PackEnd";
+
+stb_pack_font_range :: (spc: *Stb_Pack_Context, fontdata: *u8, fontIndex: s32, fontSize: float32,
+                        firstUnicodeCharInRange: s32, numCharsInRange: s32, chardataForRange: *Stb_Packed_Char) -> s32 
+#foreign stb_truetype "stbtt_PackFontRange";
+
+stb_get_packed_quad :: (chardata: *Stb_Packed_Char, pw: s32, ph: s32, charIndex: s32, xpos: *float32, ypos: *float32, q: *Stb_Aligned_Quad, alignToInteger: s32) -> void 
+#foreign stb_truetype "stbtt_GetPackedQuad";
+
+stb_get_font_offset_for_index :: (data: *u8, index: s32) -> s32 
+#foreign stb_truetype "stbtt_GetFontOffsetForIndex";
+
+stb_init_font :: (info: *Stb_Font_Info, data: *u8, offset: s32) -> s32 
+#foreign stb_truetype "stbtt_InitFont";
+
+stb_scale_for_pixel_height :: (info: *Stb_Font_Info, pixels: float32) -> float32 
+#foreign stb_truetype "stbtt_ScaleForPixelHeight";
+
+stb_get_font_v_metrics :: (info: *Stb_Font_Info, ascent: *s32, descent: *s32, lineGap: *s32) -> void 
+#foreign stb_truetype "stbtt_GetFontVMetrics";
+
+stb_get_codepoint_h_metrics :: (info: *Stb_Font_Info, codepoint: s32, advanceWidth: *s32, leftSideBearing: *s32) -> void 
+#foreign stb_truetype "stbtt_GetCodepointHMetrics";
+*/
+#scope_file
+
+//stb_truetype :: #library "lib/stb_truetype";
+stb_image :: #library "lib/stb_image";END OF .//stb_bindings.jai
+
+START OF .//texture.jai
+
+Texture :: struct {
+    id: u32;
+    path: string;
+    width, height: int;
+}
+
+init_texture_system :: () {
+    textures = create_typed_arena(Texture);
+}
+
+load_texture :: (path: string) -> *Texture {
+    for * textures {
+        if equal(it.path, path) return it;
+    }
+    
+    width, height, channels: s32;
+    pixels := stb_load_image(path.data, *width, *height, *channels, 4);
+    if !pixels return *null_texture;
+    
+    id: u32;
+    glGenTextures(1, *id);
+    glBindTexture(GL_TEXTURE_2D, id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, xx width, xx height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    
+    stb_image_free(pixels);
+    
+    texture := arena_push(*textures);
+    texture.id = id;
+    texture.path = path;
+    texture.width = xx width;
+    texture.height = xx height;
+    
+    return texture;
+}
+
+Texture_Format :: enum {
+    RGBA;
+    RGB;
+    R;
+}
+
+create_texture :: (name: string, width: int, height: int, pixels: *u8, format: Texture_Format = .RGBA) -> *Texture {
+    pixel_format, internal_format: u32;
+    if format == {
+        case .RGBA;
+        pixel_format = GL_RGBA;
+        internal_format = GL_RGBA8;
+        case .RGB;
+        pixel_format = GL_RGB;
+        internal_format = GL_RGB8;
+        case .R;
+        pixel_format = GL_RED;
+        internal_format = GL_R8;
+    }
+    
+    id: u32;
+    glGenTextures(1, *id);
+    glBindTexture(GL_TEXTURE_2D, id);
+    glTexImage2D(GL_TEXTURE_2D, 0, xx internal_format, xx width, xx height, 0, xx pixel_format, GL_UNSIGNED_BYTE, pixels);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    texture := arena_push(*textures);
+    texture.id = id;
+    texture.path = name;
+    texture.width = width;
+    texture.height = height;
+    return texture;
+}
+
+#scope_file
+
+textures: Typed_Arena(Texture);
+
+null_texture := Texture.{0, "", 0, 0};
+
+#import "Basic";
+#import "String";END OF .//texture.jai
+
+START OF .//utils.jai
+
+fatal_error :: (format: string, args: ..Any) {
+    builder: String_Builder;
+    print_to_builder(*builder, format, ..args);
+    message := builder_to_string(*builder);
+    SDL_ShowSimpleMessageBox(0x00000010, "Fatal error!", message.data, null);
+    exit(0);
+}
+
+file_read_string :: (file: *File, arena: *Arena) -> string {
+    count: int;
+    file_read(file, *count, size_of(int));
+    
+    data := arena_push_n(arena, u8, xx count);
+    file_read(file, data.data, count);
+    
+    return .{count, data.data};
+}
+
+file_read_array :: (file: *File, arena: *Arena, $T: Type, count: int) -> [] T {
+    out := arena_push_n(arena, T, xx count);
+    file_read(file, out.data, count * size_of(T));
+    return out;
+}
+
+#scope_file
+
+#import "Basic";END OF .//utils.jai
+

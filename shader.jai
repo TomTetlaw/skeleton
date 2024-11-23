@@ -22,6 +22,13 @@ set_shader_int :: (shader: *Shader, name: string, value: s32) {
     glUniform1i(loc, value);
 }
 
+set_shader_float :: (shader: *Shader, name: string, value: float) {
+    loc := get_uniform_location(shader, name);
+    if (loc == -1) return;
+    
+    glUniform1f(loc, value);
+}
+
 set_shader_vec2 :: (shader: *Shader, name: string, value: Vec2) {
     loc := get_uniform_location(shader, name);
     if (loc == -1) return;
@@ -68,6 +75,8 @@ create_shader :: (name: string, type: Shader_Type, shader_text: string) -> *Shad
         shaders[1] = shader.data;
         lengths[0] = xx prefix.count;
         lengths[1] = xx shader.count;
+        
+        write_entire_file(tprint("%.shader_text", name), tprint("%\n%\n", shader, prefix));
         
         glShaderSource(shader_object, 2, shaders.data, lengths.data);
         
@@ -179,15 +188,18 @@ null_shader: Shader;
 
 Shader_Type :: enum {
     COLOURED_MESH;
+    TEXTURED;
 }
 
 shader_coloured_mesh: *Shader;
+shader_2d_textured: *Shader;
 
 init_shader_system :: () {
     shaders = create_typed_arena(Shader);
     shader_arena = create_arena();
     
     shader_coloured_mesh = create_shader("shader_coloured_mesh", .COLOURED_MESH, SHADER_COLOURED_MESH_TEXT);
+    shader_2d_textured = create_shader("shader_2d_textured", .TEXTURED, SHADER_TEXTURED_TEXT);
     
     uniform_index := glGetUniformBlockIndex (shader_coloured_mesh.id, "Skinning_Transforms");
 	glUniformBlockBinding (shader_coloured_mesh.id, uniform_index, 0);
@@ -196,37 +208,272 @@ init_shader_system :: () {
 prepare_coloured_mesh_shader :: (mesh: *Mesh, shader: *Shader) {
     set_shader_vec3(shader, "mesh_min_bounds", mesh.min_bounds);
     set_shader_vec3(shader, "mesh_max_bounds", mesh.max_bounds);
+    set_shader_texture(shader, "shadow_map", 0);
+    set_shader_texture(shader, "diffuse_map", 1);
+    set_shader_texture(shader, "normal_map", 2);
+    set_shader_texture(shader, "rmao_map", 3);
 }
+
+prepare_2d_textured_shader :: (shader: *Shader) {
+    set_shader_texture(shader, "diffuse_map", 0);
+}
+
+SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
+                                         %1
+#if VERTEX_SHADER
+                                         layout(location = 0) in vec3 vertex_position;
+                                         layout(location = 1) in vec2 vertex_tex_coord;
+                                         layout(location = 2) in vec4 vertex_tangent_normal;
+                                         layout(location = 3) in ivec4 bone_ids;
+                                         layout(location = 4) in vec3 bone_weights;
+                                         
+                                         const int MAX_BONES  = %2;
+                                         const int MAX_WEIGHTS = %3;
+                                         
+                                         layout (std140) uniform Skinning_Transforms
+                                         {
+                                             mat4 skinning_transforms[MAX_BONES];
+                                         };
+                                         
+                                         uniform mat4 transform_matrix;
+                                         uniform mat4 view_matrix;
+                                         uniform mat4 projection_matrix;
+                                         uniform mat4 light_matrix;
+                                         uniform vec4 base_colour;
+                                         
+                                         void main() {
+                                             vec3 position = vertex_position;
+                                             vec3 normal = unpack_normal(vertex_tangent_normal.xy);
+                                             vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
+                                             
+                                             vec3 model_position = vec3(0);
+                                             vec3 model_normal = vec3(0);
+                                             vec3 model_tangent = vec3(0);
+                                             
+                                             if (bone_ids.x == -1) {
+                                                 model_position = vertex_position;
+                                                 model_normal = normal;
+                                                 model_tangent = tangent;
+                                             }
+                                             
+                                             for (int i = 0; i < MAX_WEIGHTS && bone_ids[i] != -1; i += 1) {
+                                                 int bone_id = bone_ids[i];
+                                                 float weight = 0;
+                                                 if (i == MAX_WEIGHTS - 1) {
+                                                     weight = 1.0 - (bone_weights.x+bone_weights.y+bone_weights.z);
+                                                 } else {
+                                                     weight = bone_weights[i];
+                                                 }
+                                                 
+                                                 mat4 skinning_matrix = skinning_transforms[bone_id];
+                                                 
+                                                 vec3 pose_position = (skinning_matrix * vec4(position, 1)).xyz;
+                                                 vec3 pose_normal = (skinning_matrix * vec4(normal, 1)).xyz;
+                                                 vec3 pose_tangent = (skinning_matrix * vec4(tangent, 1)).xyz;
+                                                 
+                                                 model_position += pose_position * weight;
+                                                 model_normal += pose_normal * weight;
+                                                 model_tangent += pose_tangent * weight;
+                                             }
+                                             
+                                             mat4 MVP = projection_matrix * view_matrix * transform_matrix;
+                                             vec4 ndc_position = MVP * vec4(model_position, 1);
+                                             
+                                             gl_Position = ndc_position;// snap_ps1(MVP, ndc_position, mesh_min_bounds, mesh_max_bounds, screen_params.xy);
+                                             
+                                             vec4 world_position = transform_matrix * vec4(model_position, 1);
+                                             frag_position = world_position.xyz;
+                                             frag_light_space_position = light_matrix * vec4(model_position, 1);
+                                             frag_normal = model_normal.xyz;
+                                             frag_tangent = model_tangent.xyz;
+                                             frag_tex_coord = vertex_tex_coord;
+                                             frag_colour = base_colour;
+                                         }
+                                         
+#endif
+                                         
+#if FRAGMENT_SHADER
+                                         
+                                         out vec4 output_colour;
+                                         
+                                         void main() {
+                                             vec2 tex_coord = frag_tex_coord * material_scale;
+                                             
+                                             vec3 diffuse = pow(sample(diffuse_map, tex_coord).rgb, vec3(2.2));
+                                             
+                                             vec3 colour = diffuse * frag_colour.xyz;
+                                             
+                                             vec3 bitangent = cross(frag_normal, frag_tangent);
+                                             mat3 TBN = mat3(frag_tangent, bitangent, frag_normal);
+                                             vec3 normal = sample(normal_map, tex_coord).xyz * 2 - 1;
+                                             normal = normalize(TBN * normal);
+                                             normal = normalize(mix(frag_normal, normal, 0.5));
+                                             
+                                             vec4 rmao = sample(rmao_map, tex_coord);
+                                             
+                                             Material mat;
+                                             mat.roughness = 1 * rmao.r;
+                                             mat.metallic = 1 * rmao.g;
+                                             mat.ambient_occlusion = 1 * rmao.b;
+                                             
+                                             vec3 light_pos = vec3(0, 10, 0);
+                                             vec3 light_colour = vec3(1.0, 1.0, 0.8)*500;
+                                             
+                                             colour = lighting(frag_light_space_position, frag_position, normal, colour, mat, camera_position, light_pos, light_colour);
+                                             
+                                             output_colour = vec4(colour, 1);
+                                         }
+                                         
+#endif
+                                         HERE, SHADER_SHARED_TEXT, MAX_BONES, MAX_WEIGHTS);
+
+SHADER_TEXTURED_TEXT :: #run sprint(#string HERE
+                                    %1
+#if VERTEX_SHADER
+                                    layout(location = 0) in vec3 vertex_position;
+                                    layout(location = 1) in vec2 vertex_tex_coord;
+                                    layout(location = 2) in vec4 vertex_tangent_normal;
+                                    
+                                    uniform mat4 transform_matrix;
+                                    uniform mat4 projection_matrix;
+                                    uniform vec4 base_colour;
+                                    
+                                    void main() {
+                                        vec3 position = vertex_position;
+                                        vec3 normal = unpack_normal(vertex_tangent_normal.xy);
+                                        vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
+                                        
+                                        mat4 MVP = projection_matrix * transform_matrix;
+                                        vec4 ndc_position = MVP * vec4(position, 1);
+                                        
+                                        gl_Position = ndc_position;
+                                        frag_tex_coord = vertex_tex_coord;
+                                        frag_colour = base_colour;
+                                    }
+                                    
+#endif
+                                    
+#if FRAGMENT_SHADER
+                                    out vec4 output_colour;
+                                    
+                                    void main() {
+                                        vec4 sample = texture(diffuse_map, frag_tex_coord);
+                                        float depth = sample.r;
+                                        output_colour = frag_colour * vec4(depth, depth, depth, 1);
+                                    }
+                                    
+#endif
+                                    HERE, SHADER_SHARED_TEXT);
 
 SHADER_SHARED_TEXT :: #string HERE
 INOUT vec2 frag_tex_coord;
 INOUT vec4 frag_colour;
 INOUT vec3 frag_position;
 INOUT vec3 frag_normal;
+INOUT vec3 frag_tangent;
+INOUT vec4 frag_light_space_position;
 
 uniform vec4 screen_params;
 uniform vec3 camera_position;
 uniform vec3 mesh_min_bounds;
 uniform vec3 mesh_max_bounds;
+uniform vec3 light_pos;
+uniform vec3 light_dir;
 
-vec3 ambient_lighting(vec3 light_dir, vec3 light_colour, vec3 camera_pos, vec3 object_pos, vec3 object_colour, vec3 object_normal, vec3 params) {
-    vec3 normal = normalize(object_normal);
-    vec3 dir = normalize(-light_dir);
-    vec3 view = normalize(camera_pos - object_pos);
+uniform sampler2D shadow_map;
+
+uniform sampler2D diffuse_map;
+uniform sampler2D normal_map;
+uniform sampler2D rmao_map;
+uniform float material_scale;
+
+#define PI 3.14159265359
+
+struct Material {
+    float roughness;
+    float metallic;
+    float ambient_occlusion;
+};
+
+float shadow_calculation(vec4 light_space_position, vec3 object_normal, vec3 light_dir)
+{
+    vec3 proj_coord = light_space_position.xyz / light_space_position.w;
+    proj_coord = proj_coord * 0.5 + 0.5;
+    float closest = texture(shadow_map, proj_coord.xy).r; 
+    float current = proj_coord.z;
+    float bias = max(0.05 * (1.0 - dot(object_normal, light_dir)), 0.005);
+    float shadow = current - bias > closest  ? 1.0 : 0.0;
+    return shadow;
+}  
+
+float distribution_ggx(vec3 N, vec3 H, float roughness) {
+    float a2 = roughness * roughness * roughness * roughness;
+    float NdotH = max (dot (N, H), 0.0);
+    float denom = (NdotH * NdotH * (a2 - 1.0) + 1.0);
+    return a2 / (PI * denom * denom);
+}
+
+float geometry_schlick_ggx(float NdotV, float roughness) {
+    float r = (roughness + 1.0);
+    float k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float geometry_smith(vec3 N, vec3 V, vec3 L, float roughness) {
+    return geometry_schlick_ggx(max (dot (N, L), 0.0), roughness) *
+        geometry_schlick_ggx(max (dot (N, V), 0.0), roughness);
+}
+
+vec3 fresnel_schlick(float cos_theta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cos_theta, 5.0);
+}
+
+vec3 lighting(vec4 light_space_position, vec3 object_pos, vec3 object_normal, vec3 object_colour, Material material, vec3 camera_pos, vec3 light_pos, vec3 light_colour) {
+    vec3 N = normalize(object_normal);
+    vec3 V = normalize(camera_pos - object_pos);
     
-    vec3 ambient = params.x * light_colour;
+    vec3 F0 = vec3(.04);
+    F0 = mix(F0, object_colour, material.metallic);
     
-    float diff = max(dot(normal, dir), 0.0);
-    vec3 diffuse = diff * light_colour;
+    vec3 L = normalize(light_pos - object_pos);
+    vec3 H = normalize(V + L);
+    float distance = length(light_pos - object_pos);
+    float attenuation = 1.0 / (distance * distance);
+    vec3 radiance = light_colour * attenuation;
     
-    vec3 half_dir = normalize(dir + view);
-    float spec = pow(max(dot(object_normal, half_dir), 0.0), params.z);
-    vec3 specular = params.y * spec * light_colour;
+    float NDF = distribution_ggx(N, H, material.roughness);
+    float G = geometry_smith(N, V, L, material.roughness);
+    vec3 F = fresnel_schlick(max(dot(H, V), 0.0), F0);
     
-    vec3 lighting = ambient + diffuse + specular;
-    vec3 result = lighting * object_colour;
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - material.metallic;
     
-    return result;
+    vec3 numerator = NDF * G * F;
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular = numerator / denominator;
+    
+    float NdotL = max(dot(N, L), 0.0);
+    vec3 Lo = (kD * object_colour / PI + specular) * radiance * NdotL;
+    
+    float shadow = shadow_calculation(light_space_position, object_normal, light_dir);
+    
+    vec3 ambient = vec3(0.03) * object_colour * material.ambient_occlusion;
+    vec3 colour = ambient + Lo * (1.0 - shadow);
+    
+    colour = colour / (colour + vec3(1.0));
+    colour = pow(colour, vec3(1.0/2.2));
+    
+    return colour;
+}
+
+vec4 sample(sampler2D tex, vec2 tex_coord) {
+    vec2 size = vec2(textureSize(tex, 0));
+    tex_coord *= size;
+    vec2 duv = fwidth(tex_coord);
+    tex_coord = floor(tex_coord) + vec2(0.5) + clamp((fract(tex_coord) - vec2(0.5) + duv)/duv, 0, 1);
+    tex_coord /= size;
+    return texture(tex, tex_coord);
 }
 
 vec2 get_screen_size(mat4 MVP, vec3 min_bounds, vec3 max_bounds, vec2 screen_size) {
@@ -263,98 +510,3 @@ vec3 unpack_tangent(vec2 tangent) {
 }
 
 HERE
-
-SHADER_COLOURED_MESH_TEXT :: #run sprint(#string HERE
-                                         %1
-#if VERTEX_SHADER
-                                         layout(location = 0) in vec3 vertex_position;
-                                         layout(location = 1) in vec2 vertex_tex_coord;
-                                         layout(location = 2) in vec4 vertex_tangent_normal;
-                                         layout(location = 3) in ivec4 bone_ids;
-                                         layout(location = 4) in vec3 bone_weights;
-                                         
-                                         const int MAX_BONES  = %2;
-                                         const int MAX_WEIGHTS = %3;
-                                         
-                                         layout (std140) uniform Skinning_Transforms
-                                         {
-                                             mat4 skinning_transforms[MAX_BONES];
-                                         };
-                                         
-                                         uniform mat4 transform_matrix;
-                                         uniform mat4 view_matrix;
-                                         uniform mat4 projection_matrix;
-                                         uniform vec4 base_colour;
-                                         
-                                         void main() {
-                                             vec3 position = vertex_position;
-                                             vec3 normal = unpack_normal(vertex_tangent_normal.xy);
-                                             vec3 tangent = unpack_tangent(vertex_tangent_normal.zw);
-                                             //vec3 bitangent = cross(normal, tangent) * sign(dot(cross(normal, tangent), bitangent));
-                                             
-                                             vec3 model_position = vec3(0);
-                                             vec3 model_normal = vec3(0);
-                                             vec3 model_tangent = vec3(0);
-                                             
-                                             if (bone_ids.x == -1) {
-                                                 model_position = vertex_position;
-                                                 model_normal = normal;
-                                                 model_tangent = tangent;
-                                             }
-                                             
-                                             for (int i = 0; i < MAX_WEIGHTS && bone_ids[i] != -1; i += 1) {
-                                                 int bone_id = bone_ids[i];
-                                                 float weight = 0;
-                                                 if (i == MAX_WEIGHTS - 1) {
-                                                     weight = 1.0 - (bone_weights.x+bone_weights.y+bone_weights.z);
-                                                 } else {
-                                                     weight = bone_weights[i];
-                                                 }
-                                                 
-                                                 mat4 skinning_matrix = skinning_transforms[bone_id];
-                                                 
-                                                 vec3 pose_position = (skinning_matrix * vec4(position, 1)).xyz;
-                                                 vec3 pose_normal = (skinning_matrix * vec4(normal, 1)).xyz;
-                                                 vec3 pose_tangent = (skinning_matrix * vec4(tangent, 1)).xyz;
-                                                 
-                                                 model_position += pose_position * weight;
-                                                 model_normal += pose_normal * weight;
-                                                 model_tangent += pose_tangent * weight;
-                                             }
-                                             
-                                             mat4 MVP = projection_matrix * view_matrix * transform_matrix;
-                                             vec4 ndc_position = MVP * vec4(model_position, 1);
-                                             
-                                             gl_Position = snap_ps1(MVP, ndc_position, mesh_min_bounds, mesh_max_bounds, screen_params.xy);
-                                             
-                                             vec4 world_position = vec4(model_position, 1) * transform_matrix;
-                                             frag_position = world_position.xyz;
-                                             frag_normal = (vec4(model_normal, 1) * transform_matrix).xyz;
-                                             frag_tex_coord = vertex_tex_coord;
-                                             frag_colour = base_colour;
-                                         }
-                                         
-#endif
-                                         
-#if FRAGMENT_SHADER
-                                         
-                                         out vec4 output_colour;
-                                         
-                                         uniform sampler2D base_texture;
-                                         
-                                         void main() {
-                                             vec3 light_dir =  vec3(0, -1, 0);
-                                             vec3 light_colour = vec3(1.0, 1.0, 0.9);
-                                             vec3 params = vec3(0.1, 0.0, 0.0);
-                                             vec2 tex_coord = vec2(frag_tex_coord.x, frag_tex_coord.y);
-                                             vec3 colour = /*texture(base_texture, tex_coord).xyz * */frag_colour.xyz;
-                                             
-                                             //colour = ambient_lighting(light_dir, light_colour, camera_position, frag_position, colour, frag_normal, params);
-                                             
-                                             //colour *= max(dot(normalize(frag_normal), normalize(light_dir)), 0);
-                                             
-                                             output_colour = vec4(colour, 1);
-                                         }
-                                         
-#endif
-                                         HERE, SHADER_SHARED_TEXT, MAX_BONES, MAX_WEIGHTS);

@@ -18,6 +18,12 @@ mat4_identity :: () -> Mat4 {
     return m;
 }
 
+mat4_look_at :: (pos: Vec3, dir: Vec3) -> Mat4 {
+    return make_look_at_matrix(pos, dir, .{0, 1, 0}, false);
+}
+
+mat4_ortho :: orthographic_projection_matrix;
+
 mat4_inverse :: inverse;
 mat4_projection :: make_projection_matrix;
 mat4_translation :: make_translation_matrix4;
@@ -27,6 +33,7 @@ mat4_rotation :: (q: Quaternion) -> Mat4 {
     set_rotation(*m, q);
     return m;
 }
+
 mat4_transpose :: transpose;
 
 quat_from_matrix :: get_rotation;

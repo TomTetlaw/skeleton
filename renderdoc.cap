@@ -5,7 +5,7 @@
         "commandLine": "",
         "environment": [
         ],
-        "executable": "C:\\stuff\\code\\skeleton\\build\\skeleton.exe",
+        "executable": "C:\\stuff\\code\\skeleton\\run_tree\\skeleton.exe",
         "inject": false,
         "numQueuedFrames": 0,
         "options": {

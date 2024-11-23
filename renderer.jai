@@ -50,6 +50,22 @@ init_renderer :: () {
     
     pixels := u8.[200, 200, 200, 255];
     default_grey_texture = create_texture("default_grey", 1, 1, pixels.data);
+    
+    glGenTextures(1, *shadow_map_texture);
+    glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, null);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    
+    glGenFramebuffers(1, *shadow_map_frame_buffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_map_frame_buffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadow_map_texture, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
@@ -96,6 +112,7 @@ draw_line :: (start: Vec3, end: Vec3, thickness: float, colour: Vec4) {
     command.first_index = first_index;
     command.index_count = indices.count;
     command.transform = mat4_identity();
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
     command.colour = colour;
     command.flags = .NO_DEPTH_TEST | .NO_BACKFACE_CULL;
     
@@ -139,6 +156,91 @@ draw_pose :: (player: *Anim_Player, transform: Mat4) {
     }
 }
 
+draw_2d_quad :: (position: Vec2, size: Vec2, colour: Vec4) {
+    positions := Vec3.[
+                       .{position.x, position.y, 0},
+                       .{position.x + size.x, position.y, 0},
+                       .{position.x + size.x, position.y + size.y, 0},
+                       .{position.x, position.y + size.y, 0}
+                       ];
+    
+    tex_coords := Vec2.[
+                        .{0.0, 0.0},
+                        .{1.0, 0.0},
+                        .{1.0, 1.0},
+                        .{0.0, 1.0}
+                        ];
+    
+    indices := u32.[
+                    0, 1, 2,
+                    0, 2, 3
+                    ];
+    
+    tangents_normals := Vec4.[
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0}
+                              ];
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_2d_textured;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = mat4_identity();
+    command.projection = mat4_ortho(0, 1366, 0, 768, -999, 999);
+    command.colour = colour;
+    command.flags = .NO_DEPTH_TEST;
+    
+    add_render_command(command);
+}
+
+draw_textured_quad :: (position: Vec2, size: Vec2, colour: Vec4, texture: *Texture) {
+    positions := Vec3.[
+                       .{position.x, position.y, 0},
+                       .{position.x + size.x, position.y, 0},
+                       .{position.x + size.x, position.y + size.y, 0},
+                       .{position.x, position.y + size.y, 0}
+                       ];
+    
+    tex_coords := Vec2.[
+                        .{0.0, 0.0},
+                        .{1.0, 0.0},
+                        .{1.0, 1.0},
+                        .{0.0, 1.0}
+                        ];
+    
+    indices := u32.[
+                    0, 1, 2,
+                    0, 2, 3
+                    ];
+    
+    tangents_normals := Vec4.[
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0},
+                              .{0.0, 0.0, 0.0, 0.0}
+                              ];
+    
+    first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
+    
+    command: Draw_Command;
+    command.shader = shader_2d_textured;
+    command.first_vertex = first_vertex;
+    command.first_index = first_index;
+    command.index_count = indices.count;
+    command.transform = mat4_identity();
+    command.projection = mat4_ortho(0, 1366, 0, 768, -999, 999);
+    command.colour = colour;
+    command.textures[0] = texture.id;
+    command.flags = .NO_DEPTH_WRITE;
+    
+    add_render_command(command);
+}
+
 draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     positions := mesh.positions;
     tex_coords := mesh.tex_coords;
@@ -147,13 +249,22 @@ draw_mesh :: (mesh: *Mesh, transform: Mat4) {
     
     first_vertex, first_index := write_render_buffers(positions, tex_coords, tangents_normals, indices, .[], .[]);
     
+    base_colour := load_texture("mesh/maps/test/floor_diffuse.png");
+    normal_map := load_texture("mesh/maps/test/floor_normal.png");
+    rmao_map := load_texture("mesh/maps/test/floor_rmao.png");
+    
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
     command.first_vertex = first_vertex;
     command.first_index = first_index;
     command.index_count = indices.count;
     command.transform = transform;
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
     command.colour = .{1, 1, 1, 1};
+    command.material_scale = 25;
+    command.textures[0] = base_colour.id;
+    command.textures[1] = normal_map.id;
+    command.textures[2] = rmao_map.id;
     command.mesh = mesh;
     
     add_render_command(command);
@@ -171,7 +282,9 @@ draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
     skinning_transforms := player.pose.skinning_transforms;
     glBufferSubData(GL_UNIFORM_BUFFER, 0, skinning_transforms.count * size_of(Mat4), skinning_transforms.data);
     
-    test_texture := load_texture("mesh/man/textures/man-test-texture.png");
+    base_colour := load_texture("mesh/man/textures/man_diffuse.png");
+    normal_map := load_texture("mesh/man/textures/man_normal.png");
+    rmao_map := load_texture("mesh/man/textures/man_rmao.png");
     
     command: Draw_Command;
     command.shader = shader_coloured_mesh;
@@ -179,8 +292,12 @@ draw_skinned_mesh :: (mesh: *Mesh, player: *Anim_Player, transform: Mat4) {
     command.first_index = first_index;
     command.index_count = indices.count;
     command.transform = transform;
+    command.projection = mat4_projection(45.0*PI/180.0, 1366.0/768.0, NEAR_Z_PLANE, FAR_Z_PLANE);
     command.colour = .{1, 1, 1, 1};
-    command.textures[0] = test_texture.id;
+    command.material_scale = 2.0;
+    command.textures[0] = base_colour.id;
+    command.textures[1] = normal_map.id;
+    command.textures[2] = rmao_map.id;
     command.mesh = mesh;
     
     add_render_command(command);
@@ -190,25 +307,66 @@ renderer_draw_frame :: () {
     glClearColor(0,0,0,0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
-    projection := mat4_projection(45.0*PI/180.0, 1366.0/768.0, 0.01, 1000.0);
+    glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    glBindFramebuffer(GL_FRAMEBUFFER, shadow_map_frame_buffer);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    
+    light_pos := Vec3.{0, 250, 0};
+    look_at_target := Vec3.{0, 0, 0};
+    light_dir := normalize(look_at_target - light_pos);
+    ortho_size := 250.0;
+    
+    light_view := mat4_look_at(light_pos, light_dir);
+    light_projection := mat4_ortho(-ortho_size, ortho_size, -ortho_size, ortho_size, NEAR_Z_PLANE, FAR_Z_PLANE);
+    light_matrix := light_projection * light_view;
+    
+    for commands {
+        glUseProgram(it.shader.id);
+        
+        set_shader_mat4(it.shader, "transform_matrix", it.transform);
+        set_shader_mat4(it.shader, "view_matrix", light_view);
+        set_shader_mat4(it.shader, "projection_matrix", light_projection);
+        
+        if it.shader.type == {
+            case .COLOURED_MESH;
+            prepare_coloured_mesh_shader(it.mesh, it.shader);
+            case .TEXTURED;
+            prepare_2d_textured_shader(it.shader);
+        }
+        
+        if it.flags & .NO_DEPTH_WRITE glDepthMask(GL_FALSE);
+        
+        glDrawElementsBaseVertex(GL_TRIANGLES, xx it.index_count, GL_UNSIGNED_INT, cast(*void) (it.first_index * size_of(u32)), xx it.first_vertex);
+        
+        if it.flags & .NO_DEPTH_WRITE glDepthMask(GL_TRUE);
+    }
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    
+    glViewport(0, 0, 1366, 768); // @todo
     
     for commands {
         glUseProgram(it.shader.id);
         
         set_shader_mat4(it.shader, "transform_matrix", it.transform);
         set_shader_mat4(it.shader, "view_matrix", camera.view);
-        set_shader_mat4(it.shader, "projection_matrix", projection);
+        set_shader_mat4(it.shader, "projection_matrix", it.projection);
+        set_shader_mat4(it.shader, "light_matrix", light_matrix);
         set_shader_vec4(it.shader, "base_colour", it.colour);
         set_shader_vec4(it.shader, "screen_params", .{1366, 768, 0, 0}); //@todo
         set_shader_vec3(it.shader, "camera_position", camera.position);
+        set_shader_float(it.shader, "material_scale", it.material_scale);
         
         if it.shader.type == {
             case .COLOURED_MESH;
             prepare_coloured_mesh_shader(it.mesh, it.shader);
         }
         
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, shadow_map_texture);
+        
         for it.textures {
-            glActiveTexture(GL_TEXTURE0 + cast (u32) it_index);
+            glActiveTexture(GL_TEXTURE1 + cast (u32) it_index);
             if it == 0 {
                 glBindTexture(GL_TEXTURE_2D, default_grey_texture.id);
             } else {
@@ -241,6 +399,8 @@ MAX_WEIGHTS :: 4;
 
 #scope_file
 
+#import "GL";
+
 MAX_DRAW_COMMANDS :: 1000;
 MAX_VERTICES :: 200000;
 MAX_INDICES :: 200000;
@@ -257,6 +417,13 @@ add_render_command :: (command: Draw_Command)  #no_abc {
 
 default_grey_texture: *Texture;
 
+NEAR_Z_PLANE :: 0.01;
+FAR_Z_PLANE :: 1000.0;
+
+SHADOW_MAP_SIZE :: 4096;
+shadow_map_frame_buffer: u32;
+shadow_map_texture: u32;
+
 position_buffer: u32;
 tex_coord_buffer: u32;
 tangent_normal_buffer: u32;
@@ -272,6 +439,7 @@ written_indices: int;
 
 Draw_Command_Flags :: enum_flags {
     NO_DEPTH_TEST;
+    NO_DEPTH_WRITE;
     NO_BACKFACE_CULL;
 }
 
@@ -282,7 +450,9 @@ Draw_Command :: struct {
     index_count: int;
     textures: [8] u32;
     transform: Mat4;
+    projection: Mat4;
     colour: Vec4;
+    material_scale: float;
     flags: Draw_Command_Flags;
     
     // extra info for certain draw calls
@@ -351,5 +521,3 @@ write_render_buffers :: (positions: [] Vec3, tex_coords: [] Vec2, tangents_norma
     
     return first_vertex, first_index;
 }
-
-#import "GL";

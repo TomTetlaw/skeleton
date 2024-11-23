@@ -1,5 +1,7 @@
 
 add_all_files :: (workspace: Workspace) {
+    builder: String_Builder;
+    
     files := file_list("./");
     for files {
         if !contains(it, ".jai") continue;
@@ -11,6 +13,8 @@ add_all_files :: (workspace: Workspace) {
 }
 
 set_common_options :: (options: *Build_Options) {
+    options.output_path = "run_tree";
+    options.intermediate_path = ".build/";
     options.backend = .LLVM;
     options.output_executable_name = "skeleton";
     options.debug_for_expansions = true;
@@ -19,38 +23,26 @@ set_common_options :: (options: *Build_Options) {
 }
 
 build_linux :: () {
-    make_directory_if_it_does_not_exist("./linux_build");
-
     workspace := compiler_create_workspace("Linux Build");
     options := get_build_options(workspace);
     set_common_options(*options);
     
     options.os_target = .LINUX;
-    options.output_path = "linux_build";
-    options.intermediate_path = "./.build/";
     set_build_options(options, workspace);
     
     add_all_files(workspace);
-
-    copy_directory("./run_tree/", "./linux_build/");
 }
 
 build_windows :: () {
-    make_directory_if_it_does_not_exist("./windows_build");
-
     workspace := compiler_create_workspace("Windows Build");
     options := get_build_options(workspace);
     set_common_options(*options);
     
     options.os_target = .WINDOWS;
     options.use_natvis_compatible_types = true;
-    options.output_path = "windows_build";
-    options.intermediate_path = "./.build/";
     set_build_options(options, workspace);
     
     add_all_files(workspace);
-
-    copy_directory("./run_tree/", "./windows_build/");
 }
 
 build :: () {
@@ -63,7 +55,7 @@ build :: () {
     else {
         report_error("Platform not supported.");
     }
-
+    
     set_build_options_dc(.{do_output = false});
 }
 

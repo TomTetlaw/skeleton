@@ -5,10 +5,10 @@ main :: () {
     SDL_Init(SDL_INIT_EVERYTHING);
     window := SDL_CreateWindow("Skeleton", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, xx WINDOW_WIDTH, xx WINDOW_HEIGHT, SDL_WINDOW_OPENGL);
     
-    #if OS == .WINDOWS {
-    wm_info: SDL_SysWMinfo;
-    SDL_GetWindowWMInfo(window, *wm_info);
-    hwnd := wm_info.info.win.window;
+#if OS == .WINDOWS {
+        wm_info: SDL_SysWMinfo;
+        SDL_GetWindowWMInfo(window, *wm_info);
+        hwnd := wm_info.info.win.window;
     }
     
     SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
@@ -33,10 +33,10 @@ main :: () {
     
     frame_keys.allocator = temp;
     
-    mesh_map_test := load_mesh("mesh/maps/test.mesh");
-    
     mesh_test := load_mesh("mesh/man/man.mesh");
     anim_test := load_animation("mesh/man/man.anim");
+    
+    mesh_map_test := load_mesh("mesh/maps/test.mesh");
     
     anim_player := create_anim_player(mesh_test, anim_test);
     anim_play(*anim_player);
@@ -88,9 +88,8 @@ main :: () {
         update_camera(*camera);
         anim_update(*anim_player);
         
-        mesh_transform := mat4_translation(.{0, 0, 0});
-        draw_mesh(mesh_map_test, mesh_transform);
-        draw_skinned_mesh(mesh_test, *anim_player, mesh_transform);
+        draw_mesh(mesh_map_test, mat4_identity());
+        draw_skinned_mesh(mesh_test, *anim_player, mat4_translation(.{0, 0, -10}));
         
         if key_pressed(SDL_SCANCODE_LEFT) anim_update(*anim_player);
         

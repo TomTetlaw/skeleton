@@ -22,7 +22,7 @@ Mesh :: struct {
     tex_coords: [] Vec2;
     tangents_normals: [] Vec4;
     indices: [] u32;
-
+    
     weights: [] Vec3;
     bone_ids: [] Bone_Ids;
     skeleton: *Skeleton;
@@ -70,6 +70,7 @@ load_mesh :: (path: string) -> *Mesh {
     weights := file_read_array(*file, *mesh_arena, Vec3, header.num_vertices);
     bone_ids := file_read_array(*file, *mesh_arena, Bone_Ids, header.num_vertices);
     indices := file_read_array(*file, *mesh_arena, u32, header.num_indices);
+    serialized_bones := file_read_bones(*file, *mesh_arena, header.num_bones);
     
     min_bounds := Vec3.{FLOAT32_MAX, FLOAT32_MAX, FLOAT32_MAX};
     max_bounds := Vec3.{FLOAT32_MIN, FLOAT32_MIN, FLOAT32_MIN};
@@ -84,7 +85,6 @@ load_mesh :: (path: string) -> *Mesh {
         max_bounds.z = max(max_bounds.z, it.z);
     }
     
-    serialized_bones := file_read_bones(*file, *mesh_arena, header.num_bones);
     bones := arena_push_n(*mesh_arena, Bone, xx header.num_bones);
     bone_name_map := arena_push_n(*mesh_arena, int, BONE_NAME_MAP_SIZE);
     
