@@ -15,8 +15,8 @@ main :: () {
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, xx SDL_GL_CONTEXT_DEBUG_FLAG);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, xx SDL_GL_CONTEXT_PROFILE_CORE);
     gl_context := SDL_GL_CreateContext(window);
@@ -35,11 +35,12 @@ main :: () {
     
     mesh_test := load_mesh("mesh/man/man.mesh");
     anim_test := load_animation("mesh/man/man.anim");
+    anim_player := create_anim_player(mesh_test, anim_test);
+    anim_play(*anim_player);
     
     mesh_map_test := load_mesh("mesh/maps/test.mesh");
     
-    anim_player := create_anim_player(mesh_test, anim_test);
-    anim_play(*anim_player);
+    mesh_cube := load_mesh("mesh/cube/cube.mesh");
     
     old_time = current_time_monotonic();
     
@@ -89,7 +90,14 @@ main :: () {
         anim_update(*anim_player);
         
         draw_mesh(mesh_map_test, mat4_identity());
-        draw_skinned_mesh(mesh_test, *anim_player, mat4_translation(.{0, 0, -10}));
+        draw_skinned_mesh(mesh_test, *anim_player, mat4_translation(.{0, 0, 0}));
+        
+        rotation := quat_axis_angle(.{0, 1, 0}, sin(game_time) * 360 * deg2rad);
+        for x: 0..5 {
+            for y: 0..5 {
+                draw_mesh(mesh_cube, mat4_translation(/*.{3.0 + (x*4.0), 3.0 + (y*4.0),*/ .{0, 0, xx(x+(y*5))}) /** mat4_rotation(rotation)*/);
+            }
+        }
         
         if key_pressed(SDL_SCANCODE_LEFT) anim_update(*anim_player);
         

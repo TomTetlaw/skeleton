@@ -28,6 +28,8 @@ load_texture :: (path: string) -> *Texture {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glGenerateMipmap(GL_TEXTURE_2D);
+    glObjectLabel(GL_TEXTURE, id, xx path.count, path.data);
+    glBindTexture(GL_TEXTURE_2D, 0);
     
     stb_image_free(pixels);
     
@@ -67,8 +69,11 @@ create_texture :: (name: string, width: int, height: int, pixels: *u8, format: T
     glGenerateMipmap(GL_TEXTURE_2D);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glObjectLabel(GL_TEXTURE, id, xx name.count, name.data);
+    glBindTexture(GL_TEXTURE_2D, 0);
     
     texture := arena_push(*textures);
     texture.id = id;

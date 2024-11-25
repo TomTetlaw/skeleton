@@ -1,6 +1,14 @@
 
 deg2rad :: PI / 180.0;
 rad2deg :: 180.0 / PI;
+turn2rad :: 2 * PI;
+turn2deg :: PI;
+rad2turn :: 1.0 / 2 * PI;
+deg2turn :: 1.0 / 360;
+
+basis_forward :: Vec3.{1, 0, 0};
+basis_right :: Vec3.{0, -1, 0};
+basis_up :: Vec3.{0, 0, 1};
 
 Vec2 :: Vector2;
 Vec3 :: Vector3;
@@ -24,10 +32,38 @@ mat4_look_at :: (pos: Vec3, dir: Vec3) -> Mat4 {
 
 mat4_ortho :: orthographic_projection_matrix;
 
+append :: (v: Vec3, w: float) -> Vec4 {
+    return Vec4.{v.x, v.y, v.z, w};
+}
+
 mat4_inverse :: inverse;
+
 mat4_projection :: make_projection_matrix;
-mat4_translation :: make_translation_matrix4;
-mat4_scale :: make_scale_matrix4;
+
+mat4_scale :: (v: Vec3) -> Mat4 {
+    m: Mat4 = ---;
+    m._11 = -v.y;
+    m._22 = v.z;
+    m._33 = v.x;
+    m._44 = 1;
+    return m;
+}
+
+mat4_translation :: (v: Vec3) -> Mat4 {
+    m := mat4_identity();
+    m._14 = -v.y;
+    m._24 = v.z;
+    m._34 = v.x;
+    return m;
+}
+
+mat4_axis_conversion :: Mat4.{
+    0, 0, 1, 0,
+    -1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 0, 1,
+};
+
 mat4_rotation :: (q: Quaternion) -> Mat4 {
     m := mat4_identity();
     set_rotation(*m, q);
@@ -49,7 +85,15 @@ nlerp_shortest :: (a: Quaternion, b: Quaternion, t: float) -> Quaternion
 
 quat_axis_angle :: (axis: Vec3, angle: float) -> Quaternion {
     q: Quaternion;
-    set_from_axis_and_angle(*q, axis.x, axis.y, axis.z, angle);
+    
+    st := sin(angle * 0.5);
+    ct := cos(angle * 0.5);
+    
+    q.x = axis.x * st;
+    q.y = -axis.y * st;
+    q.z = axis.z * st;
+    q.w = ct;
+    
     return q;
 }
 
@@ -69,39 +113,6 @@ mat4_decompose :: (m: Mat4) -> Vector3, Quaternion, Vector3 {
     };
     
 	return translation, rotation, scale;
-}
-
-mat4_euler_rotation :: (rotation: Vec3) -> Mat4 {
-    cX := cos(rotation.x);
-    sX := sin(rotation.x);
-    cY := cos(rotation.y);
-    sY := sin(rotation.y);
-    cZ := cos(rotation.z);
-    sZ := sin(rotation.z);
-    
-    m: Mat4 = ---;
-    
-    m._11 = cY * cZ;
-    m._12 = -cY * sZ;
-    m._13 = sY;
-    m._14 = 0;
-    
-    m._21 = sX * sY * cZ + cX * sZ;
-    m._22 = -sX * sY * sZ + cX * cZ;
-    m._23 = -sX * cY;
-    m._24 = 0;
-    
-    m._31 = -cX * sY * cZ + sX * sZ;
-    m._32 = cX * sY * sZ + sX * cZ;
-    m._33 = cX * cY;
-    m._34 = 0;
-    
-    m._41 = 0;
-    m._42 = 0;
-    m._43 = 0;
-    m._44 = 1;
-    
-    return m;
 }
 
 #scope_file
